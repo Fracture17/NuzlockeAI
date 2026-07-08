@@ -65,9 +65,10 @@ def _make_policy(rng: random.Random):
 class _StuckTracker:
     """Detects a hung screen: identical OCR text persisting past `threshold`
     seconds. Policy/search compute time must be excluded — the capture loop is
-    single-threaded, so a slow greedy search blocks captures and would otherwise
-    look like a frozen screen. Call `note_decision` right after a decision so the
-    search duration doesn't count toward the stuck threshold.
+    single-threaded, so a slow policy decision (e.g. a future search-based
+    policy) blocks captures and would otherwise look like a frozen screen.
+    Call `note_decision` right after a decision so the decision duration
+    doesn't count toward the stuck threshold.
     """
     def __init__(self, threshold: float, now: float):
         self.threshold = threshold
@@ -267,9 +268,10 @@ def _run_one_battle(state_path: Path, opponent_idx: int, level_cap: int, timeout
                                 mgba.socket, screen_capture, screen_kind,
                                 battle_state_ref[0], policy, pending_switch_ref,
                             )
-                            # A greedy search can run many seconds; exclude that
-                            # compute time from the stuck clock so a slow decision
-                            # isn't mistaken for a frozen screen.
+                            # A slow policy decision (e.g. a future search-based
+                            # policy) can run many seconds; exclude that compute
+                            # time from the stuck clock so a slow decision isn't
+                            # mistaken for a frozen screen.
                             stuck.note_decision(time.time())
                             last_screen_kind_ref[0] = screen_kind
                         else:
