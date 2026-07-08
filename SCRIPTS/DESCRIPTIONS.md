@@ -3,6 +3,10 @@
 Documented scripts in the new NuzlockeAI repo.
 
 - [build_cpp.py](build_cpp.py) — Configures and builds the nuzlocke_engine_cpp pybind11 extension via CMake (engine/build/) then installs the .so into the venv site-packages. Re-runnable/idempotent; exits non-zero on any failure.
+- [replay_golden_traces.py](replay_golden_traces.py) — Replays golden-trace .jsonl.gz files through C++ GameDriver forced replay, asserting winner/turn/fingerprint identity. `--dir` selects corpus, `--jobs 0` = all cores; exit 1 on any divergence.
+- [gen_cpp_data.py](gen_cpp_data.py) — Regenerates deterministic C++ data-table headers in engine/generated/ from liveplay/data/*. `--check` verifies committed headers are not stale (exit non-zero on drift). AI move-set header still imports src.ai from the old repo until Stage E.
+- [_naming.py](_naming.py) — Shared name-normalization helpers (display name → Python identifier) for data-generation scripts.
+- [migrate_records.py](migrate_records.py) — One-shot Stage C seeding of requirements.md from the old repo: full 296-record carry with mechanical scope remap (cpp/→engine/, src/→liveplay/ where moved) plus the capture_interval and run_one_turn_state_only fixes.
 - [play.py](play.py) — Launch mGBA with `--config States/<folder>/config.json`; L toggles capture, O inits battle, M saves current state to a new States/ subfolder (prompts for name), K pickles the live BattleState to CurrentBattle.pkl. Battle decisions come from RandomPolicy.
 - [stress_test.py](stress_test.py) — Runs battles in a loop, picking a random state subfolder from States/ (config.json holds opponent_index and level_cap). Each battle is driven by 100% RandomPolicy. Logs to /tmp/vision/stress/.
 - [replay_sweep.py](replay_sweep.py) — Replays recorded sweep boundary sessions from /tmp/vision/recordings/ through the live engine; reports per-boundary PASS/FAIL with state diffs. Supports single-boundary selection, failing-only filter, and verbose diff output.
