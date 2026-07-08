@@ -2069,3 +2069,59 @@ file = "liveplay/state/pokemon.py"
 confidence = "settled"
 rationale = "CHARGING_MOVE(34) stores the charged move id ONLY when it differs from the slot move (Metronome/Copycat two-turn); conditional keeps normal two-turn traces byte-identical. Mirrors Showdown twoturnmove.onLockMove. Tick-exempt; cleared on switch."
 updated = "2026-07-08T05:48:27.466Z"
+
+[[record]]
+name = "stage_c_engine_liveplay_split"
+file = ""
+confidence = "requirement"
+rationale = "User-approved Stage C layout: engine/ = C++ (src/bindings/tests/CMake), liveplay/ = Python live-play package, tests/SCRIPTS/RECORDS at top level. Clean git history, one commit per task, each gate-verified."
+updated = "2026-07-08T19:39:05.217Z"
+
+[[record]]
+name = "greedy_search_dropped"
+file = ""
+confidence = "requirement"
+rationale = "User: ignore greedy completely; it will be replaced by a better search method (planned RNG-bucketing guaranteed-win search). Greedy/MixedPolicy and src/search/ did not carry; stress_test runs 100% RandomPolicy."
+updated = "2026-07-08T19:39:05.270Z"
+
+[[record]]
+name = "oversized_splits_stage_d"
+file = ""
+confidence = "requirement"
+rationale = "Stage C carries files verbatim (identical behavior, new home); oversized-unit splits deferred to Stage D, where the trace-corpus gate protects splits equally well. User-approved over split-during-move."
+updated = "2026-07-08T19:39:05.320Z"
+
+[[record]]
+name = "catch2_native_tests"
+file = "engine/"
+confidence = "settled"
+rationale = "Native C++ tests use Catch2 v3.7.1 via FetchContent, linking the nuzlocke_core static lib (PIC); the pybind module stays a thin wrapper so tests build and run without Python. ctest target: native_tests."
+updated = "2026-07-08T19:39:18.409Z"
+
+[[record]]
+name = "stage_e_seam_signatures"
+file = "liveplay/engine_select.py"
+confidence = "settled"
+rationale = "run_candidate_sweep/enumerate_legal_actions stubs keep the old callables' exact signatures so Stage E is a body swap; they raise NotImplementedError until the C++ sweep is wired. SimulationError moved here from simulation_runner."
+updated = "2026-07-08T19:39:18.452Z"
+
+[[record]]
+name = "pickled_sessions_lost"
+file = "liveplay/sweep_recorder.py"
+confidence = "requirement"
+rationale = "User accepted loss of pickle-era sweep sessions when payloads moved to sweep_io JSON; no legacy reader. load_session detects .pkl files and rejects the session loudly rather than decoding."
+updated = "2026-07-08T19:39:18.497Z"
+
+[[record]]
+name = "records_store_seeding"
+file = ""
+confidence = "settled"
+rationale = "Stage C seeded the full 296-record store from the old repo (SCRIPTS/migrate_records.py): scopes remapped cpp/->engine/, src/->liveplay/ where moved; records for old-repo code (sweep, Python engine, ai, nn, search) keep src/ paths until Stage E."
+updated = "2026-07-08T19:39:26.882Z"
+
+[[record]]
+name = "corpus_100k_gitignored"
+file = "golden_traces_100k/"
+confidence = "requirement"
+rationale = "100k trace corpus is rsync-copied and git-ignored (862MB); the full replay gate (--jobs 0) runs in this repo from day one alongside the committed frozen 1028-trace gate in tests/fixtures/golden_traces."
+updated = "2026-07-08T19:39:26.935Z"
