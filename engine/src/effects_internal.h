@@ -84,6 +84,13 @@ bool resolve_secondary_det(int chance, const EffectsLuck& luck);
 bool resolve_proc_det(int chance, const EffectsLuck& luck);
 bool resolve_flinch_det(int chance, const EffectsLuck& luck);
 
+// Entry-effects helpers also used by turn-start / EOT form-change paths in effects.cpp.
+// Defined in effects_entry.cpp.
+bool is_silvally(int32_t species);
+bool is_castform_form(int32_t species);
+int32_t memory_type(int32_t item);
+void update_castform(BattleState& s, int side_idx, int32_t weather);
+
 } // namespace eff_internal
 
 #endif // NUZLOCKE_EFFECTS_INTERNAL_H

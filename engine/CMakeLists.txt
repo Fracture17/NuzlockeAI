@@ -46,6 +46,7 @@ add_library(nuzlocke_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/damage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/type_chart_lookup.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/effects.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/effects_entry.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/post_hit.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/residuals.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/species_types_lookup.cpp
@@ -65,6 +66,7 @@ add_library(nuzlocke_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ai_policy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ai_damage.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ai_scorer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ai_scorer_dist.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ai_analytic.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/game_driver.cpp
 )
