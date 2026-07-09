@@ -6,6 +6,7 @@
 
 #include "state.h"
 #include "effects.h"
+#include "rng_resolver.h"  // RngLogCtx used by resolve_*_det signatures
 #include <cstdint>
 
 // Forward declaration of global ExecCtx (defined in move_exec_guards.h).
@@ -80,9 +81,14 @@ void try_apply_flinch(BattleState& s, int defender_idx, bool mold_breaker);
 bool is_mega_item(int32_t item);
 
 // resolve_* deterministic mirrors (non-random_mode). chance 0-100.
-bool resolve_secondary_det(int chance, const EffectsLuck& luck);
-bool resolve_proc_det(int chance, const EffectsLuck& luck);
-bool resolve_flinch_det(int chance, const EffectsLuck& luck);
+// D3-follow-up: `ctx` is an optional ::RngLogCtx pointer plumbing participants
+// (attacker+defender side/slot, turn) into the analytical logger and injection
+// keying. Default nullptr keeps existing callers compiling; the callers post_hit,
+// residuals, and effects.cpp all pass non-null ctx so participant attribution is
+// captured for the solver.
+bool resolve_secondary_det(int chance, const EffectsLuck& luck, const ::RngLogCtx* ctx = nullptr);
+bool resolve_proc_det(int chance, const EffectsLuck& luck, const ::RngLogCtx* ctx = nullptr);
+bool resolve_flinch_det(int chance, const EffectsLuck& luck, const ::RngLogCtx* ctx = nullptr);
 
 // Entry-effects helpers also used by turn-start / EOT form-change paths in effects.cpp.
 // Defined in effects_entry.cpp.

@@ -18,6 +18,7 @@
 #include "codec.h"
 #include "policy.h"
 #include "ai_policy.h"
+#include "logger.h"            // reset_catb_occurrence_counters_if_registered
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <stdexcept>
@@ -46,58 +47,100 @@ GameDriver::GameDriver(const std::string& args_json) {
     policy_p0_ = j.value("policy_p0", std::string("random"));
     policy_p1_ = j.value("policy_p1", std::string("random"));
 
-    // Decode overrides if present.
+    // Decode overrides if present. Each override key accepts either a SCALAR (single
+    // answer queued once) or an ARRAY (N answers, consumed in order — consume-once
+    // semantics: the resolver pops one per occurrence and throws NeedsRNG when the
+    // queue is empty). Mirrors Python `_rng_inject` reference behavior.
+    auto push_scalar_or_array = [](std::vector<OracleAnswer>& queue,
+                                   const nlohmann::json& node) {
+        if (node.is_array()) {
+            for (const auto& v : node) {
+                OracleAnswer a; a.i0 = v.get<int>(); queue.push_back(a);
+            }
+        } else {
+            OracleAnswer a; a.i0 = node.get<int>(); queue.push_back(a);
+        }
+    };
     if (j.contains("overrides") && !j["overrides"].is_null()) {
         const auto& ov = j["overrides"];
         if (ov.contains("effect_spore_which") && !ov["effect_spore_which"].is_null()) {
-            OracleAnswer ans;
-            ans.i0 = ov["effect_spore_which"].get<int>();
-            overrides_.answers[static_cast<int>(RngEventC::EFFECT_SPORE_WHICH)] = ans;
+            push_scalar_or_array(
+                overrides_.answers[static_cast<int>(RngEventC::EFFECT_SPORE_WHICH)],
+                ov["effect_spore_which"]);
         }
         if (ov.contains("tri_attack_status") && !ov["tri_attack_status"].is_null()) {
-            OracleAnswer ans;
-            ans.i0 = ov["tri_attack_status"].get<int>();
-            overrides_.answers[static_cast<int>(RngEventC::TRI_ATTACK_STATUS)] = ans;
+            push_scalar_or_array(
+                overrides_.answers[static_cast<int>(RngEventC::TRI_ATTACK_STATUS)],
+                ov["tri_attack_status"]);
         }
         if (ov.contains("acupressure_stat") && !ov["acupressure_stat"].is_null()) {
-            OracleAnswer ans;
-            ans.i0 = ov["acupressure_stat"].get<int>();
-            overrides_.answers[static_cast<int>(RngEventC::ACUPRESSURE_STAT)] = ans;
+            push_scalar_or_array(
+                overrides_.answers[static_cast<int>(RngEventC::ACUPRESSURE_STAT)],
+                ov["acupressure_stat"]);
         }
         if (ov.contains("starf_berry_stat") && !ov["starf_berry_stat"].is_null()) {
-            OracleAnswer ans;
-            ans.i0 = ov["starf_berry_stat"].get<int>();
-            overrides_.answers[static_cast<int>(RngEventC::STARF_BERRY_STAT)] = ans;
+            push_scalar_or_array(
+                overrides_.answers[static_cast<int>(RngEventC::STARF_BERRY_STAT)],
+                ov["starf_berry_stat"]);
         }
         if (ov.contains("roar_target") && !ov["roar_target"].is_null()) {
-            OracleAnswer ans;
-            ans.i0 = ov["roar_target"].get<int>();
-            overrides_.answers[static_cast<int>(RngEventC::ROAR_TARGET)] = ans;
+            push_scalar_or_array(
+                overrides_.answers[static_cast<int>(RngEventC::ROAR_TARGET)],
+                ov["roar_target"]);
         }
         // Sub-move selection: the answer is the chosen move id (i0).
         if (ov.contains("metronome_move") && !ov["metronome_move"].is_null()) {
-            OracleAnswer ans;
-            ans.i0 = ov["metronome_move"].get<int>();
-            overrides_.answers[static_cast<int>(RngEventC::METRONOME_MOVE)] = ans;
+            push_scalar_or_array(
+                overrides_.answers[static_cast<int>(RngEventC::METRONOME_MOVE)],
+                ov["metronome_move"]);
         }
         if (ov.contains("sleep_talk_move") && !ov["sleep_talk_move"].is_null()) {
-            OracleAnswer ans;
-            ans.i0 = ov["sleep_talk_move"].get<int>();
-            overrides_.answers[static_cast<int>(RngEventC::SLEEP_TALK_MOVE)] = ans;
+            push_scalar_or_array(
+                overrides_.answers[static_cast<int>(RngEventC::SLEEP_TALK_MOVE)],
+                ov["sleep_talk_move"]);
         }
         // MOODY_STATS: two picks [boost_idx, drop_idx]. boost=i0, drop=i1 (mirrors residuals.py).
+        // Accepts either a single pair [boost, drop] or an array of pairs [[b,d],[b,d],...].
         if (ov.contains("moody_stats") && !ov["moody_stats"].is_null()) {
-            OracleAnswer ans;
-            ans.i0 = ov["moody_stats"][0].get<int>();
-            ans.i1 = ov["moody_stats"][1].get<int>();
-            overrides_.answers[static_cast<int>(RngEventC::MOODY_STATS)] = ans;
+            auto& moody_queue =
+                overrides_.answers[static_cast<int>(RngEventC::MOODY_STATS)];
+            const auto& node = ov["moody_stats"];
+            const bool is_pair_of_pairs =
+                node.is_array() && !node.empty() && node[0].is_array();
+            if (is_pair_of_pairs) {
+                for (const auto& pr : node) {
+                    OracleAnswer a;
+                    a.i0 = pr[0].get<int>();
+                    a.i1 = pr[1].get<int>();
+                    moody_queue.push_back(a);
+                }
+            } else {
+                OracleAnswer a;
+                a.i0 = node[0].get<int>();
+                a.i1 = node[1].get<int>();
+                moody_queue.push_back(a);
+            }
         }
         // SPEED_TIE: a doubles-compatible ordering of (side,slot) pairs, earliest acts first.
+        // Accepts either a single ordering or an array of orderings (consume-once).
         if (ov.contains("speed_tie") && !ov["speed_tie"].is_null()) {
-            SpeedTieOrder sto;
-            for (const auto& pr : ov["speed_tie"])
-                sto.order.push_back({pr[0].get<int>(), pr[1].get<int>()});
-            overrides_.speed_tie = std::move(sto);
+            const auto& node = ov["speed_tie"];
+            const bool is_array_of_orders =
+                node.is_array() && !node.empty() && node[0].is_array()
+                && !node[0].empty() && node[0][0].is_array();
+            if (is_array_of_orders) {
+                for (const auto& order : node) {
+                    SpeedTieOrder sto;
+                    for (const auto& pr : order)
+                        sto.order.push_back({pr[0].get<int>(), pr[1].get<int>()});
+                    overrides_.speed_tie_queue.push_back(std::move(sto));
+                }
+            } else {
+                SpeedTieOrder sto;
+                for (const auto& pr : node)
+                    sto.order.push_back({pr[0].get<int>(), pr[1].get<int>()});
+                overrides_.speed_tie_queue.push_back(std::move(sto));
+            }
         }
     }
 
@@ -233,6 +276,12 @@ std::string GameDriver::step(const std::string& answer_json) {
 
 std::string GameDriver::_run() {
     while (!cpp_battle_over(state_) && turn_count_ < max_turns_) {
+        // Per-turn occurrence-counter reset: solver injections key on (event, occurrence)
+        // where occurrence is the k-th draw of that event within the turn. The driver is
+        // the single-writer for turn boundaries, so it owns the reset — any harness that
+        // forgets to reset otherwise gets silent index drift. No-op when no counters
+        // are registered (null-fast-path).
+        reset_catb_occurrence_counters_if_registered();
         std::vector<ExecAction> actions0, actions1;
 
         if (forced_) {

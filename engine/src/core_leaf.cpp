@@ -894,15 +894,19 @@ Entry cpp_select_next_action(const BattleState& state, std::vector<Entry>& pendi
     if (pending.empty())
         throw std::runtime_error("cpp_select_next_action called with empty pending");
 
-    // SPEED_TIE oracle. Consult transient first (resume replay), then persistent speed_tie,
-    // then detect and throw NeedsRNG for unresolved controlled cross-side ties.
+    // SPEED_TIE oracle. Consult transient first (resume replay), then the persistent
+    // consumable queue (each occurrence pops one ordering), then detect and throw
+    // NeedsRNG for unresolved controlled cross-side ties.
     if (overrides && overrides->transient_tie_cursor < overrides->transient_ties.size()) {
         const SpeedTieOrder& sto = overrides->transient_ties[overrides->transient_tie_cursor++];
         for (Entry& e : pending)
             e.tie = speed_tie_value_from_order(sto, e.side_idx, e.source_slot);
-    } else if (overrides && overrides->speed_tie) {
+    } else if (overrides &&
+               overrides->persistent_tie_cursor < overrides->speed_tie_queue.size()) {
+        const SpeedTieOrder& sto =
+            overrides->speed_tie_queue[overrides->persistent_tie_cursor++];
         for (Entry& e : pending)
-            e.tie = speed_tie_value_from_order(*overrides->speed_tie, e.side_idx, e.source_slot);
+            e.tie = speed_tie_value_from_order(sto, e.side_idx, e.source_slot);
     } else if (pending.size() > 1) {
         for (size_t i = 0; i < pending.size(); ++i)
             for (size_t j = i + 1; j < pending.size(); ++j)
@@ -927,6 +931,38 @@ Entry cpp_select_next_action(const BattleState& state, std::vector<Entry>& pendi
             best_idx = i;
 
     Entry best = pending[best_idx];
+
+    // Analytical SPEED_TIE log: when >=2 entries tie on (priority, speed) the outcome IS an
+    // ordering decision. Log the resolution so the solver's RNG-bucketing sees speed ties as
+    // Cat-B draws. Encoding: chosen = winner's side*10+slot, options = sorted codes of the
+    // tied entries; participants = (winner, first tied loser). Only emitted when the winning
+    // set has >= 2 entries (a real tie); if pending.size() == 1 no tie exists.
+    if (pending.size() > 1) {
+        std::vector<int> tied_codes;
+        int loser_side = -1, loser_slot = -1;
+        for (size_t i = 0; i < pending.size(); ++i) {
+            if (i == best_idx) {
+                tied_codes.push_back(pending[i].side_idx * 10 + pending[i].source_slot);
+            } else if (action_sort_key(state, pending[i]).top_two_equal(
+                           action_sort_key(state, pending[best_idx]))) {
+                tied_codes.push_back(pending[i].side_idx * 10 + pending[i].source_slot);
+                if (loser_side < 0) { loser_side = pending[i].side_idx;
+                                      loser_slot = pending[i].source_slot; }
+            }
+        }
+        if (tied_codes.size() >= 2) {
+            std::sort(tied_codes.begin(), tied_codes.end());
+            const RngParticipants who{
+                (int8_t)best.side_idx, (int8_t)best.source_slot,
+                (int8_t)loser_side, (int8_t)loser_slot};
+            analytical_rng_log_draw(state.turn_number,
+                                    static_cast<int>(RngEventC::SPEED_TIE),
+                                    who,
+                                    best.side_idx * 10 + best.source_slot,
+                                    tied_codes.data(), tied_codes.size());
+        }
+    }
+
     pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(best_idx));
     return best;
 }

@@ -35,6 +35,7 @@
 #include "ai_scorer.h"
 #include "ai_analytic.h"
 #include "game_driver.h"
+#include "logger.h"           // CategoryBInjection / CategoryBOccurrenceCounters bindings
 
 namespace py = pybind11;
 
@@ -619,4 +620,24 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
           "Stage-3 switch scoring: {post_ko_switch, has_candidate, voluntary_target, "
           "cond2_slots, switch_scores}. post_ko_switch/voluntary_target are None when "
           "C++ would throw (no valid candidates). switch_scores: {slot_str: score}.");
+
+    // --- Category-B occurrence counters (D3 follow-up: GameDriver-owned per-turn reset) ---
+    // Solver-side tools use these to key injection lookups by draw-occurrence within a turn.
+    // GameDriver invokes reset_catb_occurrence_counters_if_registered() at each turn start.
+    py::class_<CategoryBOccurrenceCounters>(m, "CategoryBOccurrenceCounters")
+        .def(py::init<>())
+        .def("get", [](const CategoryBOccurrenceCounters& self, int event) -> uint32_t {
+            if (event < 0 || event >= (int)CategoryBOccurrenceCounters::MAX_EVENTS)
+                throw std::runtime_error("event out of range");
+            return self.counts[event];
+        }, py::arg("event"),
+           "Return the current occurrence count for the given event id (no bump).")
+        .def("reset", &CategoryBOccurrenceCounters::reset,
+             "Reset all counters to zero.");
+
+    m.def("set_catb_occ_counters",
+          [](CategoryBOccurrenceCounters* c) { set_catb_occ_counters(c); },
+          py::arg("counters").none(true),
+          "Register (or clear with None) the global CategoryBOccurrenceCounters used by "
+          "GameDriver's per-turn reset.");
 }

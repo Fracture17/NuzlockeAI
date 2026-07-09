@@ -1348,8 +1348,16 @@ int32_t cpp_calculate_damage(
         is_crit = (crit_override == 1);
     } else {
         float crit_chance = get_crit_chance(attacker, defender, md.crit_boost, magic_room);
+        const int atk_side_idx_ = (def_side_idx == 0) ? 1 : 0;
+        const SideState& atk_ss = (atk_side_idx_ == 0) ? state.side0 : state.side1;
+        const SideState& def_ss = (def_side_idx == 0)  ? state.side0 : state.side1;
+        const RngLogCtx catb_ctx{
+            RngParticipants{
+                (int8_t)atk_side_idx_, (int8_t)atk_ss.active_indices[0],
+                (int8_t)def_side_idx,  (int8_t)def_ss.active_indices[0]},
+            state.turn_number};
         is_crit = rng_resolve_crit(crit_chance, atk_luck.crit_threshold,
-                                   atk_luck.random_mode, atk_luck.rng);
+                                   atk_luck.random_mode, atk_luck.rng, &catb_ctx);
 
         // Merciless: always crits poisoned targets (unless defender has crit immunity)
         if (attacker.ability == AB_MERCILESS

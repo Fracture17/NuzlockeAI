@@ -8,6 +8,7 @@
 #include "species_types_lookup.h"
 #include "exp.h"
 #include "forced_trace.h"
+#include "rng_resolver.h"  // RngLogCtx for participant plumbing on residual procs
 
 #include <algorithm>
 #include <stdexcept>
@@ -144,8 +145,11 @@ bool band_grassy_terrain(BattleState& s, int si, int active_idx) {
 bool band_status_cure(BattleState& s, int si, int active_idx, int32_t weather, const ResidualLuck& L) {
     SideState& side = side_at(s, si);
     PokemonState& p = side.team[active_idx];
+    // Self-only residual proc: attribute to (si, active_idx); no defender.
+    const RngLogCtx self_ctx{
+        RngParticipants{(int8_t)si, (int8_t)active_idx, -1, -1}, s.turn_number};
     if (p.ability == AB_SHED_SKIN && p.status != STATUS_NONE) {
-        if (resolve_proc_det(33, luck_for(L, si))) p.status = STATUS_NONE;
+        if (resolve_proc_det(33, luck_for(L, si), &self_ctx)) p.status = STATUS_NONE;
     }
     if (p.ability == AB_HYDRATION && p.status != STATUS_NONE
         && (weather == WEATHER_RAINY || weather == WEATHER_HEAVY_RAIN))
@@ -154,7 +158,11 @@ bool band_status_cure(BattleState& s, int si, int active_idx, int32_t weather, c
         for (int32_t ally_slot : side.active_indices) {
             if (ally_slot == active_idx) continue;
             PokemonState& ally = side.team[ally_slot];
-            if (resolve_proc_det(30, luck_for(L, si)) && ally.status != STATUS_NONE)
+            // Ally-target: attacker=(si, active_idx) uses the ability; defender=(si, ally_slot).
+            const RngLogCtx heal_ctx{
+                RngParticipants{(int8_t)si, (int8_t)active_idx,
+                                (int8_t)si, (int8_t)ally_slot}, s.turn_number};
+            if (resolve_proc_det(30, luck_for(L, si), &heal_ctx) && ally.status != STATUS_NONE)
                 ally.status = STATUS_NONE;
             break;
         }
@@ -266,7 +274,9 @@ bool band_late(BattleState& s, int si, int active_idx, int opp_idx, int32_t weat
     }
     if (p.ability == AB_HARVEST && p.item == ITEM_NONE && p.consumed_berry != ITEM_NONE) {
         int harvest_chance = (weather == WEATHER_SUNNY || weather == WEATHER_HARSH_SUN) ? 100 : 50;
-        if (resolve_proc_det(harvest_chance, luck_for(L, si))) p.item = p.consumed_berry;
+        const RngLogCtx harvest_ctx{
+            RngParticipants{(int8_t)si, (int8_t)active_idx, -1, -1}, s.turn_number};
+        if (resolve_proc_det(harvest_chance, luck_for(L, si), &harvest_ctx)) p.item = p.consumed_berry;
     }
     if (p.ability == AB_MOODY) {
         // +2 to one stat (0-6), -1 to a different stat (0-6 excl boost). R&B: acc/eva
@@ -289,8 +299,10 @@ bool band_late(BattleState& s, int si, int active_idx, int opp_idx, int32_t weat
                 if (drop_idx >= boost_idx) drop_idx += 1;
             }
         } else if (el.overrides) {
-            OracleAnswer ans = oracle_resolve_pair(el.overrides, RngEventC::MOODY_STATS,
-                                                   {0, 1, 2, 3, 4, 5, 6});
+            OracleAnswer ans = oracle_resolve_pair(
+                el.overrides, RngEventC::MOODY_STATS, {0, 1, 2, 3, 4, 5, 6},
+                RngParticipants{(int8_t)si, (int8_t)active_idx, (int8_t)(1 - si), (int8_t)opp_idx},
+                s.turn_number);
             boost_idx = ans.i0 % 7;
             drop_idx = ans.i1 % 7;
             if (boost_idx == drop_idx)
@@ -485,7 +497,14 @@ void apply_damage_fs(BattleState& s, int defender_idx, int damage,
     int32_t new_hp = std::max(0, d.hp - damage);
     int32_t new_item = d.item;
     if (new_hp == 0 && (d.volatiles & VOL_ENDURE_ACTIVE)) new_hp = 1;
-    else if (new_hp == 0 && d.item == I_FOCUS_BAND) { if (resolve_proc_det(10, luck)) new_hp = 1; }
+    else if (new_hp == 0 && d.item == I_FOCUS_BAND) {
+        // Future Sight path: attacker unknown (residual damage), defender = the fs target.
+        const RngLogCtx fb_ctx{
+            RngParticipants{-1, -1, (int8_t)defender_idx,
+                            (int8_t)side_at(s, defender_idx).active_indices[0]},
+            s.turn_number};
+        if (resolve_proc_det(10, luck, &fb_ctx)) new_hp = 1;
+    }
     else if (new_hp == 0 && d.item == I_FOCUS_SASH && d.hp == d.max_hp) { new_hp = 1; new_item = ITEM_NONE; }
     else if (new_hp == 0 && d.ability == AB_STURDY && d.hp == d.max_hp) new_hp = 1;
 

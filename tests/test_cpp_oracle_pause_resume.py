@@ -161,19 +161,20 @@ def test_override_poison():
 
 
 # ---------------------------------------------------------------------------
-# Test 3: Override reused across multiple turns
+# Test 3: Single-answer override covers a single occurrence
 # ---------------------------------------------------------------------------
 
-def test_override_reused_across_turns():
-    """Override set once is reused every time EFFECT_SPORE_WHICH fires."""
+def test_override_single_answer_covers_single_occurrence():
+    """One injected answer covers the single Effect Spore occurrence across a 3-turn game."""
     state = _make_effect_spore_battle()
-    # 3 turns so Spore should fire on turn 1 (and possibly later turns if not already statused).
-    # Effect Spore can only apply once (status already applied), but the override should
-    # not be consumed — this tests the read-only behavior of the override map.
+    # 3 turns so Spore would try to fire multiple times if not already statused. Effect Spore
+    # only applies once (subsequent hits skip because target is already statused), so there's
+    # only ONE occurrence of the EFFECT_SPORE_WHICH oracle event to consume. Consume-once
+    # semantics (D3) mean a single scalar answer is sufficient here.
     overrides = {"effect_spore_which": STATUS_PARALYSIS}
     driver = _create_driver(state, overrides_json=overrides, max_turns=3)
     result = _step(driver)
-    # With override, no pause should occur; it should run to max_turns or done.
+    # With the injected answer, no pause should occur; it should run to max_turns or done.
     assert result["status"] in ("done", "max_turns"), (
         f"Expected done/max_turns, got: {result['status']!r}")
     st = _active_status_from_result(result)

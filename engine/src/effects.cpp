@@ -458,7 +458,13 @@ bool check_berry(BattleState& s, int side_idx, int opp_side_idx, NativeRng* rng,
                 chosen_stat = rng->randint(0, 4);
             }
         } else {
-            chosen_stat = oracle_resolve(overrides, RngEventC::STARF_BERRY_STAT, {0,1,2,3,4});
+            const SideState& mside = side_at(s, side_idx);
+            const SideState& oside = side_at(s, opp_side_idx);
+            RngParticipants who{
+                (int8_t)side_idx, (int8_t)mside.active_indices[0],
+                (int8_t)opp_side_idx, (int8_t)oside.active_indices[0]};
+            chosen_stat = oracle_resolve(overrides, RngEventC::STARF_BERRY_STAT,
+                                         {0,1,2,3,4}, who, s.turn_number);
         }
         mon.item = ITEM_NONE;
         mon.consumed_berry = berry;
@@ -507,20 +513,23 @@ void try_apply_flinch(BattleState& s, int defender_idx, bool mold_breaker) {
 
 // Resolvers: chance>=100 -> true (no RNG), chance<=0 -> false (no RNG).
 // Each forwards to rng_resolve_chance with the appropriate threshold field and event id.
-bool resolve_secondary_det(int chance, const EffectsLuck& luck) {
+// D3-follow-up: threads participant/turn context (ctx) into the underlying resolver
+// so the analytical logger and Category-B injection channel see attacker/defender
+// attribution for every secondary/proc/flinch draw.
+bool resolve_secondary_det(int chance, const EffectsLuck& luck, const RngLogCtx* ctx) {
     // rng.py:368 SECONDARY_FIRES
     return rng_resolve_chance(chance, luck.secondary_threshold, luck.random_mode, luck.rng,
-                              RngEventC::SECONDARY_FIRES);
+                              RngEventC::SECONDARY_FIRES, ctx);
 }
-bool resolve_proc_det(int chance, const EffectsLuck& luck) {
+bool resolve_proc_det(int chance, const EffectsLuck& luck, const RngLogCtx* ctx) {
     // rng.py:378 PROC_FIRES
     return rng_resolve_chance(chance, luck.proc_threshold, luck.random_mode, luck.rng,
-                              RngEventC::PROC_FIRES);
+                              RngEventC::PROC_FIRES, ctx);
 }
-bool resolve_flinch_det(int chance, const EffectsLuck& luck) {
+bool resolve_flinch_det(int chance, const EffectsLuck& luck, const RngLogCtx* ctx) {
     // rng.py:538 FLINCH
     return rng_resolve_chance(chance, luck.flinch_threshold, luck.random_mode, luck.rng,
-                              RngEventC::FLINCH);
+                              RngEventC::FLINCH, ctx);
 }
 
 } // namespace eff_internal
@@ -666,7 +675,12 @@ static bool apply_protect_move(BattleState& s, int side_idx, int32_t move,
             // Python uses round() (banker's); lround() (half-away) differs only on *.5, which
             // 100/counter never yields here (counter in {3,9,27,81} -> 33,11,4,1). Equivalent.
             int chance = (int)std::lround(100.0 / attacker.protect_counter);
-            if (!resolve_proc_det(chance, luck)) { attacker.protect_counter = 0; return true; }
+            // Self-only proc (no defender attribution).
+            const RngLogCtx ctx_endure{
+                RngParticipants{(int8_t)side_idx,
+                                (int8_t)side_at(s, side_idx).active_indices[0], -1, -1},
+                s.turn_number};
+            if (!resolve_proc_det(chance, luck, &ctx_endure)) { attacker.protect_counter = 0; return true; }
         }
         attacker.protect_counter = attacker.protect_counter > 0 ? attacker.protect_counter * 3 : 3;
         attacker.volatiles |= VOLATILE_ENDURE_ACTIVE | VOLATILE_PROTECT_USED;
@@ -687,7 +701,12 @@ static bool apply_protect_move(BattleState& s, int side_idx, int32_t move,
     if (attacker.protect_counter > 0) {
         // See Endure note above: lround vs Python round() only differ on *.5, unreachable here.
         int chance = (int)std::lround(100.0 / attacker.protect_counter);
-        if (!resolve_proc_det(chance, luck)) {
+        // Self-only proc (protect consecutive-use chain).
+        const RngLogCtx ctx_protect{
+            RngParticipants{(int8_t)side_idx,
+                            (int8_t)side_at(s, side_idx).active_indices[0], -1, -1},
+            s.turn_number};
+        if (!resolve_proc_det(chance, luck, &ctx_protect)) {
             attacker.protect_counter = 0;
             return true;  // consecutive-use failure: no protection recorded
         }
@@ -1071,7 +1090,13 @@ static bool apply_volatile_move(BattleState& s, int side_idx, int32_t move, int 
                 stat_idx = luck.rng->randint(0, 6);
             }
         } else {
-            stat_idx = oracle_resolve(luck.overrides, RngEventC::ACUPRESSURE_STAT, {0,1,2,3,4,5,6});
+            const SideState& mside = side_at(s, side_idx);
+            const SideState& oside = side_at(s, opp);
+            RngParticipants who{
+                (int8_t)side_idx, (int8_t)mside.active_indices[0],
+                (int8_t)opp,      (int8_t)oside.active_indices[0]};
+            stat_idx = oracle_resolve(luck.overrides, RngEventC::ACUPRESSURE_STAT,
+                                      {0,1,2,3,4,5,6}, who, s.turn_number);
         }
         change_stat_stage(s, side_idx, stat_idx, +2, false, false, false);
         return true;

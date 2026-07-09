@@ -373,7 +373,13 @@ void handle_status_action(BattleState& state, int side_idx, int defender_idx, in
         if (active_mon(state, defender_idx).ability == AB_WONDER_SKIN)
             eff_acc = std::min(eff_acc, 50.0);
     }
-    if (!rng_resolve_accuracy(eff_acc, eff_is_none, luck_atk.accuracy_threshold, luck_atk.random_mode, luck_atk.rng)) {
+    const RngLogCtx catb_ctx{
+        RngParticipants{
+            (int8_t)side_idx,     (int8_t)side_at(state, side_idx).active_indices[0],
+            (int8_t)defender_idx, (int8_t)side_at(state, defender_idx).active_indices[0]},
+        state.turn_number};
+    if (!rng_resolve_accuracy(eff_acc, eff_is_none, luck_atk.accuracy_threshold,
+                              luck_atk.random_mode, luck_atk.rng, &catb_ctx)) {
         active_mon(state, side_idx).last_move_failed = true;
         return;
     }

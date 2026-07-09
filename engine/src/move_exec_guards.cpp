@@ -668,8 +668,13 @@ bool pdg_accuracy_and_miss(BattleState& state, int side_idx, int defender_idx, i
     compute_effective_accuracy(eff_acc, eff_acc_is_none, attacker, move, md, ro_state,
                                state, side_idx, defender_idx);
 
+    const RngLogCtx catb_ctx{
+        RngParticipants{
+            (int8_t)side_idx,     (int8_t)side_at(state, side_idx).active_indices[0],
+            (int8_t)defender_idx, (int8_t)side_at(state, defender_idx).active_indices[0]},
+        state.turn_number};
     if (rng_resolve_accuracy(eff_acc, eff_acc_is_none, luck_atk.accuracy_threshold,
-                             luck_atk.random_mode, luck_atk.rng))
+                             luck_atk.random_mode, luck_atk.rng, &catb_ctx))
         return false;
 
     // Miss consequences.

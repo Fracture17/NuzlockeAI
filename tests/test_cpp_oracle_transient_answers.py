@@ -242,21 +242,37 @@ def test_speed_tie_pauses_each_turn():
 
 
 # ---------------------------------------------------------------------------
-# 5. test_persistent_override_still_fires_every_occurrence
+# 5. test_persistent_override_queue_consumes_in_order
 #
-# Constructor-injected metronome_move override with max_turns=2: NO pauses at all, and
-# the Metronome sub-move executes each turn using the persistent override. This guards
-# the persistent channel from being affected by transient changes.
+# D3: the persistent-override channel is now a consume-once queue mirroring Python's
+# _rng_inject semantics. Constructor-injecting a LIST of N answers lets N successive
+# occurrences resolve without pausing (in FIFO order); when the queue is empty, the
+# next occurrence pauses (NeedsRNG). Verified with two Metronome turns and two answers.
 # ---------------------------------------------------------------------------
 
-def test_persistent_override_still_fires_every_occurrence():
+def test_persistent_override_queue_consumes_in_order():
     state = _make_metronome_battle()
-    # Use Splash as the persistent sub-move so Snorlax survives both turns
+    # Provide TWO persistent answers so both metronome fires (turn 1 and turn 2)
+    # can consume from the queue without pausing.
+    driver = _create_driver(state,
+                            overrides_json={"metronome_move": [
+                                Move.SPLASH.value, Move.SPLASH.value]},
+                            max_turns=2)
+
+    result = _step(driver)
+    assert result["status"] in ("done", "max_turns"), (
+        f"Two persistent answers should cover both occurrences; got {result['status']!r}")
+
+
+def test_persistent_override_queue_exhausted_pauses():
+    """A single injected answer covers only the first occurrence; the second pauses."""
+    state = _make_metronome_battle()
     driver = _create_driver(state,
                             overrides_json={"metronome_move": Move.SPLASH.value},
                             max_turns=2)
 
-    result = _step(driver)
-    # With persistent override, Metronome always resolves to Splash without pausing
-    assert result["status"] in ("done", "max_turns"), (
-        f"Persistent override should prevent all pauses; got {result['status']!r}")
+    r1 = _step(driver)
+    # Turn 1 consumed the single answer; turn 2's metronome must pause loudly.
+    assert r1["status"] == "pending", (
+        f"Second occurrence with exhausted queue should pause; got {r1['status']!r}")
+    assert r1["event"] == METRONOME_MOVE_INT

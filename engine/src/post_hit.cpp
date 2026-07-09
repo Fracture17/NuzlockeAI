@@ -13,6 +13,7 @@
 #include "move_exec_guards.h"      // ExecCtx (for ctx->overrides in contact effects)
 #include "oracle.h"                // oracle_resolve, RngEventC, NeedsRNG
 #include "forced_trace.h"
+#include "rng_resolver.h"          // RngLogCtx for participant plumbing
 
 #include <algorithm>
 #include <stdexcept>
@@ -51,6 +52,17 @@ void apply_form_change(BattleState& s, int side_idx, int32_t new_species) {
 } // namespace eff_internal
 
 namespace {
+
+// Build an RngLogCtx attributing (attacker=si, defender=di) with active-slot indices,
+// tagged with the current turn number. Used everywhere post_hit resolves a
+// secondary/proc/flinch draw so the analytical logger sees full participant info.
+inline RngLogCtx make_rng_ctx(BattleState& s, int si, int di) {
+    return RngLogCtx{
+        RngParticipants{
+            (int8_t)si, (int8_t)side_at(s, si).active_indices[0],
+            (int8_t)di, (int8_t)side_at(s, di).active_indices[0]},
+        s.turn_number};
+}
 
 const MoveData& lookup_move_ph(int32_t move_id) {
     int lo = 0, hi = 813;
@@ -339,7 +351,8 @@ void apply_contact_effects(BattleState& s, const PostHitArgs& a, bool mold_break
             if (dab == A_FLAME_BODY) contact_status = STATUS_BURN;
             else if (dab == A_STATIC) contact_status = STATUS_PARALYSIS;
             else if (dab == A_POISON_POINT) contact_status = STATUS_POISON;
-            if (contact_status != STATUS_NONE && resolve_proc_det(30, luck)) {
+            const RngLogCtx contact_ctx = make_rng_ctx(s, si, di);
+            if (contact_status != STATUS_NONE && resolve_proc_det(30, luck, &contact_ctx)) {
                 if (can_apply_status(active_mon(s, si), contact_status, MOVE_NONE, AB_NONE, s)) {
                     apply_status_to(s, si, contact_status);
                     check_status_berry(s, si, di);
@@ -353,8 +366,9 @@ void apply_contact_effects(BattleState& s, const PostHitArgs& a, bool mold_break
         // is set in ctx->overrides, it is used; otherwise NeedsRNG is thrown so the driver pauses.
         if (!active_mon(s, si).fainted && active_mon(s, di).ability == A_EFFECT_SPORE) {
             PokemonState& atk = active_mon(s, si);
+            const RngLogCtx spore_ctx = make_rng_ctx(s, si, di);
             if (!has_type(atk, TYPE_GRASS) && atk.item != I_SAFETY_GOGGLES
-                && atk.ability != A_OVERCOAT && resolve_proc_det(30, luck)) {
+                && atk.ability != A_OVERCOAT && resolve_proc_det(30, luck, &spore_ctx)) {
                 int32_t spore_status;
                 if (luck.random_mode) {
                     if (!luck.rng) throw std::runtime_error("random_mode=true but rng=nullptr (misconfiguration)");
@@ -369,8 +383,14 @@ void apply_contact_effects(BattleState& s, const PostHitArgs& a, bool mold_break
                 } else {
                     // oracle_resolve returns the override i0, or throws NeedsRNG for the driver to handle.
                     const OracleOverrides* ov = (a.ctx ? a.ctx->overrides : nullptr);
+                    // Effect Spore is a defender ability firing on the attacker: participants
+                    // are (attacker=si, defender=di); we store (si, di) as (side, opp).
+                    RngParticipants who{
+                        (int8_t)si, (int8_t)side_at(s, si).active_indices[0],
+                        (int8_t)di, (int8_t)side_at(s, di).active_indices[0]};
                     spore_status = oracle_resolve(ov, RngEventC::EFFECT_SPORE_WHICH,
-                                                 {STATUS_SLEEP, STATUS_PARALYSIS, STATUS_POISON});
+                                                 {STATUS_SLEEP, STATUS_PARALYSIS, STATUS_POISON},
+                                                 who, s.turn_number);
                 }
                 if (can_apply_status(active_mon(s, si), spore_status, MOVE_NONE, AB_NONE, s)) {
                     apply_status_to(s, si, spore_status);
@@ -383,8 +403,9 @@ void apply_contact_effects(BattleState& s, const PostHitArgs& a, bool mold_break
         if (!active_mon(s, si).fainted && active_mon(s, di).ability == A_CUTE_CHARM
             && !a.hit_sub) {
             PokemonState& atk = active_mon(s, si);
+            const RngLogCtx cc_ctx = make_rng_ctx(s, si, di);
             if (atk.ability != A_OBLIVIOUS && atk.ability != A_OWN_TEMPO
-                && !(atk.volatiles & V_ATTRACTED) && resolve_proc_det(30, luck))
+                && !(atk.volatiles & V_ATTRACTED) && resolve_proc_det(30, luck, &cc_ctx))
                 atk.volatiles |= V_ATTRACTED;
         }
     }
@@ -394,8 +415,9 @@ void apply_contact_effects(BattleState& s, const PostHitArgs& a, bool mold_break
         PokemonState& defender = active_mon(s, di);
         bool blocked = ((defender.ability == A_SHIELD_DUST && !mold_breaker)
                         || defender.item == I_COVERT_CLOAK);
+        const RngLogCtx pt_ctx = make_rng_ctx(s, si, di);
         if (!defender.fainted && active_mon(s, si).ability == A_POISON_TOUCH
-            && !blocked && resolve_proc_det(30, luck)) {
+            && !blocked && resolve_proc_det(30, luck, &pt_ctx)) {
             if (can_apply_status(active_mon(s, di), STATUS_POISON, MOVE_NONE, AB_NONE, s)) {
                 apply_status_to(s, di, STATUS_POISON);
                 check_status_berry(s, di, si);
@@ -406,8 +428,9 @@ void apply_contact_effects(BattleState& s, const PostHitArgs& a, bool mold_break
     // Cursed Body (30%)
     {
         PokemonState& attacker = active_mon(s, si);
+        const RngLogCtx cb_ctx = make_rng_ctx(s, si, di);
         if (active_mon(s, di).ability == A_CURSED_BODY && !attacker.fainted && !a.hit_sub
-            && !has_timed_volatile(attacker, VE_DISABLE) && resolve_proc_det(30, luck))
+            && !has_timed_volatile(attacker, VE_DISABLE) && resolve_proc_det(30, luck, &cb_ctx))
             active_mon(s, si).timed_volatiles.push_back({VE_DISABLE, 4});
     }
 }
@@ -427,13 +450,14 @@ void sec_standard_secondary(BattleState& s, const PostHitArgs& a, bool mold_brea
     if (!(a.damage > 0 && sec.chance != 0 && atk_snapshot.ability != A_SHEER_FORCE))
         return;
     int eff_chance = (atk_snapshot.ability == A_SERENE_GRACE) ? sec.chance * 2 : sec.chance;
+    const RngLogCtx sec_ctx = make_rng_ctx(s, si, di);
     bool flinch_only = sec.flinch && !sec.has_status && sec.num_stat_changes == 0 && sec.volatile_confused != 1;
     if (flinch_only) {
         bool sd = (active_mon(s, di).ability == A_SHIELD_DUST && !mold_breaker);
-        if (!sd && resolve_flinch_det(eff_chance, luck)) try_apply_flinch(s, di, mold_breaker);
+        if (!sd && resolve_flinch_det(eff_chance, luck, &sec_ctx)) try_apply_flinch(s, di, mold_breaker);
         return;
     }
-    if (!resolve_secondary_det(eff_chance, luck)) return;
+    if (!resolve_secondary_det(eff_chance, luck, &sec_ctx)) return;
     bool sd = (active_mon(s, di).ability == A_SHIELD_DUST && !mold_breaker);
     if (a.move == M_TRI_ATTACK && !sd) {
         // random_mode picks BURN/FREEZE/PARALYSIS uniformly via rng->choice, mirroring Python's
@@ -451,8 +475,12 @@ void sec_standard_secondary(BattleState& s, const PostHitArgs& a, bool mold_brea
             }
         } else {
             const OracleOverrides* ov = (a.ctx ? a.ctx->overrides : nullptr);
+            RngParticipants who{
+                (int8_t)si, (int8_t)side_at(s, si).active_indices[0],
+                (int8_t)di, (int8_t)side_at(s, di).active_indices[0]};
             chosen = oracle_resolve(ov, RngEventC::TRI_ATTACK_STATUS,
-                                    {STATUS_BURN, STATUS_FREEZE, STATUS_PARALYSIS});
+                                    {STATUS_BURN, STATUS_FREEZE, STATUS_PARALYSIS},
+                                    who, s.turn_number);
         }
         if (can_apply_status(active_mon(s, di), chosen, a.move, atk_snapshot.ability, s)) {
             apply_status_to(s, di, chosen);
@@ -512,13 +540,14 @@ void sec_secondary2(BattleState& s, const PostHitArgs& a, bool mold_breaker, con
     PokemonState attacker = active_mon(s, si);
     if (!(a.damage > 0 && has_sec2 && attacker.ability != A_SHEER_FORCE)) return;
     int eff_chance2 = (attacker.ability == A_SERENE_GRACE) ? sec2.chance * 2 : sec2.chance;
+    const RngLogCtx sec2_ctx = make_rng_ctx(s, si, di);
     bool flinch_only2 = sec2.flinch && !sec2.has_status && sec2.num_stat_changes == 0;
     if (flinch_only2) {
         bool sd = (active_mon(s, di).ability == A_SHIELD_DUST && !mold_breaker);
-        if (!sd && resolve_flinch_det(eff_chance2, luck)) try_apply_flinch(s, di, mold_breaker);
+        if (!sd && resolve_flinch_det(eff_chance2, luck, &sec2_ctx)) try_apply_flinch(s, di, mold_breaker);
         return;
     }
-    if (!resolve_secondary_det(eff_chance2, luck)) return;
+    if (!resolve_secondary_det(eff_chance2, luck, &sec2_ctx)) return;
     bool sd = (active_mon(s, di).ability == A_SHIELD_DUST && !mold_breaker);
     if (sec2.has_status && !sd) {
         if (can_apply_status(active_mon(s, di), sec2.status, a.move, attacker.ability, s)) {
@@ -543,16 +572,17 @@ void sec_item_and_ability_flinch(BattleState& s, const PostHitArgs& a, bool mold
     const MoveData& md = lookup_move_ph(a.move);
     PokemonState attacker = active_mon(s, si);
     bool move_has_flinch = md.secondary.flinch;
+    const RngLogCtx iaf_ctx = make_rng_ctx(s, si, di);
     if (a.damage > 0 && (attacker.item == I_KINGS_ROCK || attacker.item == I_RAZOR_FANG)) {
         if (!move_has_flinch) {
-            if (!active_mon(s, di).fainted && resolve_flinch_det(10, luck))
+            if (!active_mon(s, di).fainted && resolve_flinch_det(10, luck, &iaf_ctx))
                 try_apply_flinch(s, di, mold_breaker);
         }
     }
     if (attacker.ability == A_STENCH && a.damage > 0 && !move_has_flinch) {
         PokemonState& defender = active_mon(s, di);
         bool sd = ((defender.ability == A_SHIELD_DUST && !mold_breaker) || defender.item == I_COVERT_CLOAK);
-        if (!defender.fainted && !sd && resolve_flinch_det(10, luck))
+        if (!defender.fainted && !sd && resolve_flinch_det(10, luck, &iaf_ctx))
             try_apply_flinch(s, di, mold_breaker);
     }
 }

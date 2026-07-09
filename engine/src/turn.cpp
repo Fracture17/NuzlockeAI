@@ -225,7 +225,11 @@ void cpp_resolve_pending_switches(BattleState& state,
             std::vector<int> options;
             for (const ExecAction& c : bench) options.push_back(c.switch_to_slot);
             std::sort(options.begin(), options.end());
-            team_idx = oracle_resolve(overrides, RngEventC::ROAR_TARGET, options);
+            RngParticipants who{
+                (int8_t)attacker_side, (int8_t)side_at(state, attacker_side).active_indices[0],
+                (int8_t)phaze_side,    (int8_t)side_at(state, phaze_side).active_indices[0]};
+            team_idx = oracle_resolve(overrides, RngEventC::ROAR_TARGET, options,
+                                      who, state.turn_number);
         } else {
             team_idx = policies[phaze_side]->select_phaze(bench, state, phaze_side).switch_to_slot;
         }
@@ -538,7 +542,12 @@ void cpp_run_one_turn(BattleState& state,
                 RngEventC sub_event = (used_move == MV_METRONOME)
                     ? RngEventC::METRONOME_MOVE : RngEventC::SLEEP_TALK_MOVE;
                 try {
-                    chosen = oracle_resolve(overrides, sub_event, options);
+                    RngParticipants who{
+                        (int8_t)side_idx, (int8_t)source_slot,
+                        (int8_t)(1 - side_idx),
+                        (int8_t)side_at(state, 1 - side_idx).active_indices[0]};
+                    chosen = oracle_resolve(overrides, sub_event, options,
+                                            who, state.turn_number);
                 } catch (NeedsRNG& nr) {
                     pause(nr);
                 }

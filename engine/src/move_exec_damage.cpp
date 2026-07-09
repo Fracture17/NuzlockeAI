@@ -186,9 +186,10 @@ double get_crit_chance(const PokemonState& attacker, const PokemonState& defende
 
 // resolve_hit_count (mirror damage.py). Encapsulates Skill Link / Battle Bond / Parental Bond.
 int32_t resolve_hit_count(const PokemonState& attacker, int32_t move, const MoveData& md,
-                          const DamageLoopLuck& luck, bool& parental_bond_active) {
+                          const DamageLoopLuck& luck, bool& parental_bond_active,
+                          const RngLogCtx* ctx) {
     int32_t hit_count = rng_resolve_multi_hit(md.min_hits, md.max_hits, luck.multi_hit_roll,
-                                              luck.random_mode, luck.rng);
+                                              luck.random_mode, luck.rng, ctx);
     if (attacker.ability == AB_SKILL_LINK && md.max_hits > 1) hit_count = md.max_hits;
     if (attacker.ability == AB_BATTLE_BOND && attacker.species == SP_GRENINJA_ASH
             && move == MV_WATER_SHURIKEN) hit_count = 3;
@@ -320,9 +321,16 @@ LoopResult handle_damage_loop(BattleState& state, int side_idx, int defender_idx
     }
     if (lucky_chant_def) luck_atk.crit_threshold = 101.0;
 
+    // Analytical-logger participants/turn for Cat-B draws in this damage loop.
+    const RngLogCtx catb_ctx{
+        RngParticipants{
+            (int8_t)side_idx,     (int8_t)side_at(state, side_idx).active_indices[0],
+            (int8_t)defender_idx, (int8_t)side_at(state, defender_idx).active_indices[0]},
+        state.turn_number};
+
     bool parental_bond_active = false;
     int32_t hit_count = resolve_hit_count(active_mon(state, side_idx), move, md, luck_atk,
-                                          parental_bond_active);
+                                          parental_bond_active, &catb_ctx);
 
     // Triple Axel: fixed 3 hits with escalating BP [20, 40, 60]; accuracy re-checked each hit.
     static const int32_t TRIPLE_AXEL_BPS[3] = {20, 40, 60};
@@ -401,7 +409,7 @@ LoopResult handle_damage_loop(BattleState& state, int side_idx, int defender_idx
         if (is_triple_axel
             && !rng_resolve_accuracy(effective_acc, effective_acc_is_none,
                                      luck_atk.accuracy_threshold, luck_atk.random_mode,
-                                     luck_atk.rng))
+                                     luck_atk.rng, &catb_ctx))
             break;
 
         // Fling: BP override from the attacker's held item. Items not listed
@@ -500,7 +508,7 @@ LoopResult handle_damage_loop(BattleState& state, int side_idx, int defender_idx
         float hit_crit_chance = static_cast<float>(get_crit_chance(attacker, defender,
                                                                    md.crit_boost, magic_room_for_crit));
         bool hit_is_crit = rng_resolve_crit(hit_crit_chance, hit_crit_threshold,
-                                            luck_atk.random_mode, luck_atk.rng);
+                                            luck_atk.random_mode, luck_atk.rng, &catb_ctx);
         if (attacker.ability == AB_MERCILESS
                 && (defender.status == STATUS_POISON || defender.status == STATUS_TOXIC)
                 && defender.ability != AB_BATTLE_ARMOR
