@@ -55,7 +55,7 @@ void cpp_apply_entry_hazards(BattleState& s, int entering_side_idx) {
             for (const auto& e : side.side_conditions)
                 if (e.condition != SC_TOXIC_SPIKES_1 && e.condition != SC_TOXIC_SPIKES_2)
                     kept.push_back(e);
-            side.side_conditions = kept;
+            side.side_conditions.assign_from(kept);
         } else {
             int32_t new_status = ts2 ? STATUS_TOXIC : STATUS_POISON;
             if (can_apply_status(mon, new_status, MOVE_NONE, AB_NONE, s)) {
@@ -271,7 +271,7 @@ void cpp_apply_entry_effects(BattleState& s, int entering_side_idx, ExecCtx* ctx
     if (ability == AB_INTIMIDATE) {
         bool intim_mb = is_mold_breaker(side_at(s, entering_side_idx).team[entering_ai].base_ability);
         SideState& opp_side = side_at(s, opp_idx);
-        std::vector<int32_t> opp_active = opp_side.active_indices;  // copy (list(...))
+        std::vector<int32_t> opp_active(opp_side.active_indices.begin(), opp_side.active_indices.end());  // copy (list(...))
         for (int32_t opp_ai : opp_active) {
             PokemonState& opp_mon0 = side_at(s, opp_idx).team[opp_ai];
             if (opp_mon0.volatiles & VOLATILE_SUBSTITUTE) continue;
@@ -371,7 +371,7 @@ void cpp_apply_entry_effects(BattleState& s, int entering_side_idx, ExecCtx* ctx
             std::vector<SideConditionEntry> kept;
             for (const auto& e : side.side_conditions)
                 if (!is_screen_condition(e.condition)) kept.push_back(e);
-            side.side_conditions = kept;
+            side.side_conditions.assign_from(kept);
         }
     }
 

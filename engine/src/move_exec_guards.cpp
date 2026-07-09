@@ -418,10 +418,14 @@ bool cpp_pre_damage_checks(BattleState& state, int side_idx, int defender_idx,
         if (is_charging) {
             attacker.charging_move_slot = -1;
             auto& tv = attacker.timed_volatiles;
-            tv.erase(std::remove_if(tv.begin(), tv.end(),
-                     [](const TimedVolatile& e) { return e.effect == VE_SEMI_INVULNERABLE
-                                                      || e.effect == VE_CHARGING_MOVE; }),
-                     tv.end());
+            // In-place filter (InlineVec has no erase-range API).
+            std::size_t w = 0;
+            for (std::size_t r = 0; r < tv.size(); ++r) {
+                const auto& e = tv[r];
+                if (e.effect != VE_SEMI_INVULNERABLE && e.effect != VE_CHARGING_MOVE)
+                    tv[w++] = e;
+            }
+            while (tv.size() > w) tv.pop_back();
             // Fall through to deal damage.
         } else {
             bool skip_charge = false;
@@ -635,10 +639,15 @@ bool pdg_move_specific_fail_guards(BattleState& state, int side_idx, int defende
     if (move == MV_BRICK_BREAK || move == MV_PSYCHIC_FANGS) {
         SideState& ds = side_at(state, defender_idx);
         auto& sc = ds.side_conditions;
-        sc.erase(std::remove_if(sc.begin(), sc.end(), [](const SideConditionEntry& e) {
-                     return e.condition == SC_REFLECT_ID || e.condition == SC_LIGHT_SCREEN_ID
-                         || e.condition == SC_AURORA_VEIL_ID;
-                 }), sc.end());
+        // In-place filter (InlineVec has no erase-range API).
+        std::size_t w = 0;
+        for (std::size_t r = 0; r < sc.size(); ++r) {
+            const auto& e = sc[r];
+            if (e.condition != SC_REFLECT_ID && e.condition != SC_LIGHT_SCREEN_ID
+                    && e.condition != SC_AURORA_VEIL_ID)
+                sc[w++] = e;
+        }
+        while (sc.size() > w) sc.pop_back();
     }
 
     // Sheer Cold: Ice immunity.

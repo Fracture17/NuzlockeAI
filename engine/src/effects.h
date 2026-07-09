@@ -8,6 +8,7 @@
 #include "native_rng.h"   // NativeRng
 #include "oracle.h"       // OracleOverrides
 #include <cstdint>
+#include <vector>
 
 // Probe options threaded from the binding (mirrors the deterministic LuckProfile fields the
 // ported branches consume). Defaults reproduce GOOD_LUCK semantics used by the test harness.

@@ -46,7 +46,7 @@ void apply_form_change(BattleState& s, int side_idx, int32_t new_species) {
     mon.stat_spa = new_stats[3]; mon.stat_spd = new_stats[4]; mon.stat_spe = new_stats[5];
     mon.has_max_hp = true; mon.max_hp = new_max_hp;
     mon.has_hp = true; mon.hp = new_hp;
-    mon.has_types = true; mon.types = cpp_species_types(new_species);
+    mon.has_types = true; mon.types.assign_from(cpp_species_types(new_species));
 }
 } // namespace eff_internal
 
@@ -675,7 +675,7 @@ void cpp_apply_post_hit_effects(BattleState& s, const PostHitArgs& a,
                 std::vector<TimedVolatile> kept;
                 for (const auto& tv : atk.timed_volatiles)
                     if (tv.effect != VE_TRAPPED && tv.effect != VE_TRAPPED_SOURCE_ID) kept.push_back(tv);
-                atk.timed_volatiles = std::move(kept);
+                atk.timed_volatiles.assign_from(kept);
             }
         }
         for (auto [trap_idx, source_team_idx] :
@@ -709,7 +709,7 @@ void cpp_apply_post_hit_effects(BattleState& s, const PostHitArgs& a,
             std::vector<int32_t> nt;
             for (int32_t t : attacker.types) if (t != TYPE_FIRE) nt.push_back(t);
             if (nt.empty()) nt.push_back(18); // TYPELESS
-            attacker.types = nt; attacker.has_types = true;
+            attacker.types.assign_from(nt); attacker.has_types = true;
         }
     }
     // Steel Beam
@@ -841,11 +841,11 @@ void cpp_apply_post_hit_effects(BattleState& s, const PostHitArgs& a,
         SideState& side = side_at(s, si);
         std::vector<SideConditionEntry> kept;
         for (const auto& e : side.side_conditions) if (!in_set(SPIN_HAZARDS, e.condition)) kept.push_back(e);
-        side.side_conditions = kept;
+        side.side_conditions.assign_from(kept);
         PokemonState& attacker = active_mon(s, si);
         std::vector<TimedVolatile> ntv;
         for (const auto& tv : attacker.timed_volatiles) if (tv.effect != VE_BOUND) ntv.push_back(tv);
-        attacker.timed_volatiles = ntv;
+        attacker.timed_volatiles.assign_from(ntv);
     }
     // Throat Spray
     {

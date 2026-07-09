@@ -1,25 +1,33 @@
 // C++ structs mirroring Python frozen dataclasses from src/state/ and src/engine/actions.py.
 // Field names and order match sweep_io.py registry; enums carry same integer values as Python IntEnum/IntFlag.
 // All enum fields stored as raw int32_t to avoid conflicts with generated-header enum definitions.
+// D2 (2026-07-09): heap-owning members replaced with InlineVec so BattleState is trivially
+// copyable (memcpy-able) for the RNG-bucketing solver. Capacities are hard game-semantics
+// bounds; overflow aborts (fail-loud) — see inline_vec.h.
 #pragma once
 #ifndef NUZLOCKE_STATE_H
 #define NUZLOCKE_STATE_H
 
 #include <cstdint>
-#include <optional>
-#include <string>
-#include <vector>
-#include <nlohmann/json.hpp>
+
+#include "inline_vec.h"
 
 // ---------------------------------------------------------------------------
 // PokemonState (src/state/pokemon.py)
 // ---------------------------------------------------------------------------
 
-// One entry in timed_volatiles: (VolatileEffect int value, turns_remaining)
+// One entry in timed_volatiles: (VolatileEffect int value, turns_remaining OR payload).
+// The int field is dual-purpose: a duration for tickers (0..8, -1=infinite) OR a payload
+// (Move id for VE_CHARGING_MOVE, team_idx for VE_BOUND_SOURCE_ID/etc.), so it stays int32_t.
 struct TimedVolatile {
     int32_t effect;  // VolatileEffect enum int value
     int32_t turns;
 };
+
+// Type entries: max 2 (dual-type mons). 3 for safety on Roost-restore transient combinations.
+constexpr std::size_t POKEMON_TYPES_CAP = 3;
+// TimedVolatile entries per mon: <= distinct VolatileEffect kinds (~25). 32 for headroom.
+constexpr std::size_t POKEMON_TIMED_VOLATILES_CAP = 32;
 
 struct PokemonState {
     // Required fields
@@ -52,14 +60,14 @@ struct PokemonState {
 
     // Optional types (null when not set)
     bool has_types = false;
-    std::vector<int32_t> types;  // Type int values
+    InlineVec<int32_t, POKEMON_TYPES_CAP> types;  // Type int values
 
     // stat_stages: tuple of 7 ints (Atk,Def,SpA,SpD,Spe,Acc,Eva)
     int32_t stage0 = 0, stage1 = 0, stage2 = 0, stage3 = 0, stage4 = 0, stage5 = 0, stage6 = 0;
 
     int32_t volatiles = 0;  // Volatile IntFlag bitmask
 
-    std::vector<TimedVolatile> timed_volatiles;
+    InlineVec<TimedVolatile, POKEMON_TIMED_VOLATILES_CAP> timed_volatiles;
 
     int32_t turns_in_battle    = 0;
     int32_t toxic_turns        = 0;
@@ -104,36 +112,61 @@ struct PokemonState {
 // SideState (src/state/side.py)
 // ---------------------------------------------------------------------------
 
+// SideCondition duration: 0..8 turns or -1 (infinite ability-set weather-side effects).
 struct SideConditionEntry {
     int32_t condition;  // SideCondition int value
-    int32_t turns;
+    int8_t  turns;
+};
+
+// Party size max (canonical Nuzlocke party = 6).
+constexpr std::size_t SIDE_TEAM_CAP = 6;
+// Active slots: singles=1, doubles=2.
+constexpr std::size_t SIDE_ACTIVE_CAP = 2;
+// SideCondition kinds <= 13 (see SC_* in effects_consts.h); 16 for headroom.
+constexpr std::size_t SIDE_CONDITIONS_CAP = 16;
+// Imprisoned moves: at most 4 per imprisoner, up to 2 imprisoners active per side (doubles).
+constexpr std::size_t SIDE_IMPRISONED_MOVES_CAP = 8;
+
+// Baton Pass transfer payload (Python side.py: baton_pass_data tuple[
+//   tuple[int,...]*7 stat_stages, int volatiles_bitmask, tuple timed_volatiles,
+//   int crit_stage, int sub_hp]).
+// Encodes exactly the fields transferred; JSON codec still emits the original wire shape.
+struct BatonPassData {
+    int32_t stage0 = 0, stage1 = 0, stage2 = 0, stage3 = 0, stage4 = 0, stage5 = 0, stage6 = 0;
+    int32_t volatiles_bitmask = 0;
+    int32_t crit_stage = 0;
+    int32_t sub_hp = 0;
+    InlineVec<TimedVolatile, POKEMON_TIMED_VOLATILES_CAP> timed_volatiles;
 };
 
 struct SideState {
-    std::vector<PokemonState> team;
+    InlineVec<PokemonState, SIDE_TEAM_CAP> team;
     int32_t format = 0;  // FormatEnum int value
 
-    std::vector<int32_t> active_indices;
-    std::vector<SideConditionEntry> side_conditions;
+    InlineVec<int32_t, SIDE_ACTIVE_CAP> active_indices;
+    InlineVec<SideConditionEntry, SIDE_CONDITIONS_CAP> side_conditions;
 
     bool mega_used = false;
 
-    // baton_pass_data: null or complex nested tuple — stored as raw JSON to preserve structure
+    // Baton Pass pending payload (typed; codec re-encodes the Python nested-tuple shape).
     bool          has_baton_pass_data = false;
-    nlohmann::json baton_pass_data_raw;
+    BatonPassData baton_pass_data;
 
     bool    ally_fainted_last_turn = false;
 
-    // wish_pending: null or (turns, hp, slot)
+    // wish_pending: null or (turns_remaining, hp_to_heal, slot_index). Wish always resolves
+    // on the next turn so turns is 0..2 -> int8_t.
     bool    has_wish_pending = false;
-    int32_t wish_turns = 0, wish_hp = 0, wish_slot = 0;
+    int8_t  wish_turns = 0;
+    int32_t wish_hp = 0, wish_slot = 0;
 
-    // future_sight_pending: null or (turns, damage, Move int, target_slot)
+    // future_sight_pending: null or (turns_remaining, damage, Move int, target_slot). turns 0..3.
     bool    has_future_sight_pending = false;
-    int32_t fs_turns = 0, fs_damage = 0, fs_move = 0, fs_target_slot = 0;
+    int8_t  fs_turns = 0;
+    int32_t fs_damage = 0, fs_move = 0, fs_target_slot = 0;
 
-    // imprisoned_moves: frozenset of Move int values (stored sorted)
-    std::vector<int32_t> imprisoned_moves;
+    // imprisoned_moves: frozenset of Move int values (stored sorted).
+    InlineVec<int32_t, SIDE_IMPRISONED_MOVES_CAP> imprisoned_moves;
 
     int32_t redirect_target          = -1;
     bool    redirect_is_rage_powder  = false;
@@ -143,20 +176,39 @@ struct SideState {
 // BattleState (src/state/battle.py)
 // ---------------------------------------------------------------------------
 
+// PseudoWeather duration: 0..8, -1=infinite.
 struct PseudoWeatherEntry {
     int32_t effect;  // PseudoWeather int value
-    int32_t turns;
+    int8_t  turns;
+};
+
+// PseudoWeather kinds: currently 2 (Trick Room, Gravity, plus Magic Room). 8 for headroom.
+constexpr std::size_t BATTLE_PSEUDO_WEATHER_CAP = 8;
+// Turn order: doubles has 2 movers per side => 4 entries.
+constexpr std::size_t BATTLE_TURN_ORDER_CAP = 4;
+// exp_participants: outer indexed by opponent active slot (<= SIDE_ACTIVE_CAP-ish but reserved
+// for a full team of 6 across game — sized to team cap for safety); inner participant set
+// size <= team size.
+constexpr std::size_t BATTLE_EXP_PARTICIPANT_OUTER_CAP = SIDE_TEAM_CAP;
+constexpr std::size_t BATTLE_EXP_PARTICIPANT_INNER_CAP = SIDE_TEAM_CAP;
+
+// Inner set: sorted list of team indices contributing to a KO's EXP payout.
+struct ExpParticipantSet {
+    InlineVec<int32_t, BATTLE_EXP_PARTICIPANT_INNER_CAP> members;
+
+    bool operator==(const ExpParticipantSet& o) const { return members == o.members; }
+    bool operator!=(const ExpParticipantSet& o) const { return !(*this == o); }
 };
 
 struct BattleState {
     SideState side0, side1;
 
     int32_t weather       = 0;
-    int32_t weather_turns = 0;
+    int8_t  weather_turns = 0;
     int32_t terrain       = 0;
-    int32_t terrain_turns = 0;
+    int8_t  terrain_turns = 0;
 
-    std::vector<PseudoWeatherEntry> pseudo_weather;
+    InlineVec<PseudoWeatherEntry, BATTLE_PSEUDO_WEATHER_CAP> pseudo_weather;
 
     int32_t turn_number                 = 1;
     int32_t echoed_voice_multiplier     = 0;
@@ -164,16 +216,16 @@ struct BattleState {
     int32_t battle_last_move            = -1;
     int32_t format                      = 0;  // FormatEnum int value
 
-    std::vector<int32_t> turn_order;
-    std::vector<int32_t> prev_turn_order;  // stored as __tuple__
+    InlineVec<int32_t, BATTLE_TURN_ORDER_CAP> turn_order;
+    InlineVec<int32_t, BATTLE_TURN_ORDER_CAP> prev_turn_order;  // stored as __tuple__
 
     bool    is_trainer_battle = true;
 
     bool    has_level_cap = false;
     int32_t level_cap     = 0;
 
-    // exp_participants: tuple of frozensets of int (each inner vec sorted)
-    std::vector<std::vector<int32_t>> exp_participants;
+    // exp_participants: tuple of frozensets of int (each inner set sorted).
+    InlineVec<ExpParticipantSet, BATTLE_EXP_PARTICIPANT_OUTER_CAP> exp_participants;
 };
 
 #endif // NUZLOCKE_STATE_H

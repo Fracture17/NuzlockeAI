@@ -571,7 +571,7 @@ void cpp_release_inflicted_traps(BattleState& s, int departed_side_idx, int32_t 
                 continue;
             kept.push_back(tv);
         }
-        victim.timed_volatiles = std::move(kept);
+        victim.timed_volatiles.assign_from(kept);
     }
 }
 
@@ -606,7 +606,7 @@ void cpp_apply_switch_out_reset(BattleState& s, int side_idx, int old_idx) {
     if (!side.imprisoned_moves.empty()) side.imprisoned_moves.clear();
 
     // reset_types from species (isolated TU to avoid enum class Type clash)
-    mon.types = cpp_species_types(mon.species);
+    mon.types.assign_from(cpp_species_types(mon.species));
     mon.has_types = true;
 
     mon.turns_in_battle = 0;
@@ -711,7 +711,7 @@ static bool apply_protect_move(BattleState& s, int side_idx, int32_t move,
 static void remove_sc(SideState& side, int32_t cond) {
     std::vector<SideConditionEntry> kept;
     for (const auto& e : side.side_conditions) if (e.condition != cond) kept.push_back(e);
-    side.side_conditions = kept;
+    side.side_conditions.assign_from(kept);
 }
 static bool side_has(const SideState& side, int32_t cond) {
     for (const auto& e : side.side_conditions) if (e.condition == cond) return true;
@@ -752,7 +752,7 @@ static bool apply_hazard_move(BattleState& s, int side_idx, int32_t move) {
             SideState& tside = side_at(s, t);
             std::vector<SideConditionEntry> kept;
             for (const auto& e : tside.side_conditions) if (!in_clears(e.condition)) kept.push_back(e);
-            tside.side_conditions = kept;
+            tside.side_conditions.assign_from(kept);
         }
         return true;
     }
@@ -790,7 +790,7 @@ static bool apply_field_move(BattleState& s, int side_idx, int32_t move) {
 
     if (move == MOVE_REFLECT || move == MOVE_LIGHT_SCREEN || move == MOVE_AURORA_VEIL) {
         if (move == MOVE_AURORA_VEIL && s.weather != WEATHER_HAIL) return true;
-        int32_t duration = (attacker.item == ITEM_LIGHT_CLAY) ? 8 : 5;
+        int8_t duration = (attacker.item == ITEM_LIGHT_CLAY) ? 8 : 5;
         int32_t cond = (move == MOVE_REFLECT) ? SC_REFLECT
                      : (move == MOVE_LIGHT_SCREEN) ? SC_LIGHT_SCREEN : SC_AURORA_VEIL;
         if (!side_has(side, cond)) side.side_conditions.push_back({cond, duration});
@@ -818,7 +818,7 @@ static bool apply_field_move(BattleState& s, int side_idx, int32_t move) {
         if (w != WEATHER_NONE) {
             int32_t duration = (attacker.item == rock) ? 8 : 5;
             s.weather = w;
-            s.weather_turns = duration;
+            s.weather_turns = static_cast<int8_t>(duration);
             return true;
         }
     }
@@ -832,7 +832,7 @@ static bool apply_field_move(BattleState& s, int side_idx, int32_t move) {
         if (terrain != TERRAIN_NONE) {
             int32_t duration = (attacker.item == ITEM_TERRAIN_EXTENDER) ? 8 : 5;
             s.terrain = terrain;
-            s.terrain_turns = duration;
+            s.terrain_turns = static_cast<int8_t>(duration);
             apply_terrain_seeds(s);
             return true;
         }
@@ -845,7 +845,7 @@ static bool apply_field_move(BattleState& s, int side_idx, int32_t move) {
         if (has_pseudo(s, PW_TRICK_ROOM)) {
             std::vector<PseudoWeatherEntry> kept;
             for (const auto& e : s.pseudo_weather) if (e.effect != PW_TRICK_ROOM) kept.push_back(e);
-            s.pseudo_weather = kept;
+            s.pseudo_weather.assign_from(kept);
         } else {
             s.pseudo_weather.push_back({PW_TRICK_ROOM, 5});
         }
@@ -1180,7 +1180,7 @@ static bool apply_recovery_move(BattleState& s, int side_idx, int32_t move, int 
             } else {
                 std::vector<int32_t> kept;
                 for (int32_t t : mon.types) if (t != TYPE_FLYING) kept.push_back(t);
-                mon.types = kept;
+                mon.types.assign_from(kept);
             }
             mon.timed_volatiles.push_back({VE_ROOST, 1});
         }
@@ -1237,7 +1237,7 @@ static bool apply_self_status_move(BattleState& s, int side_idx, int32_t move) {
             if (m != MOVE_NONE) imp.push_back(m);
         std::sort(imp.begin(), imp.end());
         imp.erase(std::unique(imp.begin(), imp.end()), imp.end());
-        side.imprisoned_moves = imp;
+        side.imprisoned_moves.assign_from(imp);
         return true;
     }
     if (move == MOVE_BELLY_DRUM) {
@@ -1693,16 +1693,16 @@ void cpp_apply_eot_weather_terrain(BattleState& s) {
         std::vector<SideConditionEntry> kept;
         for (const auto& e : side.side_conditions) {
             if (e.turns == -1) kept.push_back({e.condition, -1});
-            else if (e.turns > 1) kept.push_back({e.condition, e.turns - 1});
+            else if (e.turns > 1) kept.push_back({e.condition, static_cast<int8_t>(e.turns - 1)});
         }
-        side.side_conditions = kept;
+        side.side_conditions.assign_from(kept);
     }
-    s.weather = new_weather; s.weather_turns = new_weather_turns;
-    s.terrain = new_terrain; s.terrain_turns = new_terrain_turns;
+    s.weather = new_weather; s.weather_turns = static_cast<int8_t>(new_weather_turns);
+    s.terrain = new_terrain; s.terrain_turns = static_cast<int8_t>(new_terrain_turns);
     std::vector<PseudoWeatherEntry> new_pw;
     for (const auto& e : s.pseudo_weather) {
         if (e.turns == -1) new_pw.push_back({e.effect, -1});
-        else if (e.turns - 1 > 0) new_pw.push_back({e.effect, e.turns - 1});
+        else if (e.turns - 1 > 0) new_pw.push_back({e.effect, static_cast<int8_t>(e.turns - 1)});
     }
-    s.pseudo_weather = new_pw;
+    s.pseudo_weather.assign_from(new_pw);
 }

@@ -516,33 +516,17 @@ void handle_status_action(BattleState& state, int side_idx, int defender_idx, in
             constexpr int32_t BP_VOLATILE_ALLOWLIST = 1282055;
             int32_t bp_vol = bp.volatiles & BP_VOLATILE_ALLOWLIST;
 
-            nlohmann::json stages = nlohmann::json::array(
-                {bp.stage0, bp.stage1, bp.stage2, bp.stage3, bp.stage4, bp.stage5, bp.stage6});
-
-            nlohmann::json tv = nlohmann::json::array();
-            for (const auto& t : bp.timed_volatiles) {
-                nlohmann::json eff;
-                eff["__enum__"] = "VolatileEffect";
-                eff["value"] = t.effect;
-                nlohmann::json pair;
-                pair["__tuple__"] = nlohmann::json::array({eff, t.turns});
-                tv.push_back(pair);
-            }
-
-            nlohmann::json stages_t;
-            stages_t["__tuple__"] = stages;
-            nlohmann::json vol_e;
-            vol_e["__enum__"] = "Volatile";
-            vol_e["value"] = bp_vol;
-            nlohmann::json tv_t;
-            tv_t["__tuple__"] = tv;
-
-            nlohmann::json data;
-            data["__tuple__"] = nlohmann::json::array(
-                {stages_t, vol_e, tv_t, bp.crit_stage, bp.sub_hp});
+            BatonPassData data;
+            data.stage0 = bp.stage0; data.stage1 = bp.stage1; data.stage2 = bp.stage2;
+            data.stage3 = bp.stage3; data.stage4 = bp.stage4; data.stage5 = bp.stage5;
+            data.stage6 = bp.stage6;
+            data.volatiles_bitmask = bp_vol;
+            data.crit_stage = bp.crit_stage;
+            data.sub_hp     = bp.sub_hp;
+            for (const auto& t : bp.timed_volatiles) data.timed_volatiles.push_back(t);
 
             myside.has_baton_pass_data = true;
-            myside.baton_pass_data_raw = data;
+            myside.baton_pass_data = data;
             pending_switches.push_back({side_idx, "u_turn"});
         }
     }
@@ -853,7 +837,7 @@ void cpp_apply_dancer_trigger(BattleState& state, int original_user_idx, int32_t
     DamageLoopLuck la = luck_atk, ld = luck_def;
     for (int dancer_side_idx = 0; dancer_side_idx < 2; ++dancer_side_idx) {
         SideState& dancer_side = side_at(state, dancer_side_idx);
-        std::vector<int32_t> slots = dancer_side.active_indices;  // copy: slot-swap mutates the vector
+        std::vector<int32_t> slots(dancer_side.active_indices.begin(), dancer_side.active_indices.end());  // copy: slot-swap mutates the vector
         for (int32_t slot : slots) {
             PokemonState& mon = dancer_side.team[slot];
             if (mon.fainted) continue;

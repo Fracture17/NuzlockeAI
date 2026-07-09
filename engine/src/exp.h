@@ -7,6 +7,7 @@
 
 #include "state.h"
 #include <cstdint>
+#include <vector>
 
 // Total EXP required to reach `level` for the given growth rate (mirrors exp_for_level).
 int64_t cpp_exp_for_level(int32_t growth_rate, int32_t level);

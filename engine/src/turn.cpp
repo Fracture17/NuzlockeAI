@@ -310,7 +310,11 @@ void cpp_run_one_turn(BattleState& state,
         // === _begin_turn ===
         // Initialize the per-turn exp-participant sets (from state, else one empty set per opp active slot).
         if (!state.exp_participants.empty()) {
-            exp_participants = state.exp_participants;  // each inner vector is the frozenset members
+            // Copy from InlineVec<ExpParticipantSet>: each inner is the frozenset members.
+            exp_participants.clear();
+            for (const auto& eps : state.exp_participants) {
+                exp_participants.emplace_back(eps.members.begin(), eps.members.end());
+            }
         } else {
             exp_participants.assign(state.side1.active_indices.size(), {});
         }
@@ -792,5 +796,11 @@ void cpp_run_one_turn(BattleState& state,
         std::sort(participants.begin(), participants.end());
         participants.erase(std::unique(participants.begin(), participants.end()), participants.end());
     }
-    state.exp_participants = exp_participants;
+    // Write back to InlineVec<ExpParticipantSet, N>.
+    state.exp_participants.clear();
+    for (const auto& participants : exp_participants) {
+        ExpParticipantSet eps;
+        for (int32_t v : participants) eps.members.push_back(v);
+        state.exp_participants.push_back(eps);
+    }
 }

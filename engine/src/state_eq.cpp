@@ -20,35 +20,46 @@ inline void mix(std::size_t& seed, const T& v) {
     hash_combine(seed, std::hash<T>{}(v));
 }
 
-// Order-independent mix of an int vector (set field): XOR of per-element hashes,
+// Order-independent mix of an int container (set field): XOR of per-element hashes,
 // so insertion order does not affect the result.
-inline std::size_t hash_int_set(const std::vector<int32_t>& v) {
+template <typename Container>
+inline std::size_t hash_int_set(const Container& v) {
     std::size_t acc = 0;
     for (int32_t x : v) acc ^= std::hash<int32_t>{}(static_cast<int>(x));
     return acc;
 }
 
-bool equal_timed(const std::vector<TimedVolatile>& a, const std::vector<TimedVolatile>& b) {
+template <typename Container>
+bool equal_timed(const Container& a, const Container& b) {
     if (a.size() != b.size()) return false;
     for (std::size_t i = 0; i < a.size(); ++i)
         if (a[i].effect != b[i].effect || a[i].turns != b[i].turns) return false;
     return true;
 }
 
-bool equal_side_conditions(const std::vector<SideConditionEntry>& a,
-                           const std::vector<SideConditionEntry>& b) {
+template <typename Container>
+bool equal_side_conditions(const Container& a, const Container& b) {
     if (a.size() != b.size()) return false;
     for (std::size_t i = 0; i < a.size(); ++i)
         if (a[i].condition != b[i].condition || a[i].turns != b[i].turns) return false;
     return true;
 }
 
-bool equal_pseudo(const std::vector<PseudoWeatherEntry>& a,
-                  const std::vector<PseudoWeatherEntry>& b) {
+template <typename Container>
+bool equal_pseudo(const Container& a, const Container& b) {
     if (a.size() != b.size()) return false;
     for (std::size_t i = 0; i < a.size(); ++i)
         if (a[i].effect != b[i].effect || a[i].turns != b[i].turns) return false;
     return true;
+}
+
+bool equal_baton_pass(const BatonPassData& a, const BatonPassData& b) {
+    return a.stage0 == b.stage0 && a.stage1 == b.stage1 && a.stage2 == b.stage2 &&
+           a.stage3 == b.stage3 && a.stage4 == b.stage4 && a.stage5 == b.stage5 &&
+           a.stage6 == b.stage6 &&
+           a.volatiles_bitmask == b.volatiles_bitmask &&
+           a.crit_stage == b.crit_stage && a.sub_hp == b.sub_hp &&
+           equal_timed(a.timed_volatiles, b.timed_volatiles);
 }
 
 }  // namespace
@@ -120,9 +131,9 @@ bool state_equal(const SideState& a, const SideState& b) {
     return a.format == b.format && a.active_indices == b.active_indices &&
            equal_side_conditions(a.side_conditions, b.side_conditions) &&
            a.mega_used == b.mega_used &&
-           // baton_pass_data: presence flag + raw JSON value.
+           // baton_pass_data: presence flag + typed payload.
            a.has_baton_pass_data == b.has_baton_pass_data &&
-           (!a.has_baton_pass_data || a.baton_pass_data_raw == b.baton_pass_data_raw) &&
+           (!a.has_baton_pass_data || equal_baton_pass(a.baton_pass_data, b.baton_pass_data)) &&
            a.ally_fainted_last_turn == b.ally_fainted_last_turn &&
            a.has_wish_pending == b.has_wish_pending &&
            (!a.has_wish_pending ||
@@ -210,8 +221,13 @@ std::size_t hash_side(const SideState& s) {
     for (const auto& sc : s.side_conditions) { mix(seed, sc.condition); mix(seed, sc.turns); }
     mix(seed, s.mega_used);
     mix(seed, s.has_baton_pass_data);
-    if (s.has_baton_pass_data)
-        hash_combine(seed, std::hash<std::string>{}(s.baton_pass_data_raw.dump()));
+    if (s.has_baton_pass_data) {
+        const BatonPassData& bp = s.baton_pass_data;
+        mix(seed, bp.stage0); mix(seed, bp.stage1); mix(seed, bp.stage2);
+        mix(seed, bp.stage3); mix(seed, bp.stage4); mix(seed, bp.stage5); mix(seed, bp.stage6);
+        mix(seed, bp.volatiles_bitmask); mix(seed, bp.crit_stage); mix(seed, bp.sub_hp);
+        for (const auto& tv : bp.timed_volatiles) { mix(seed, tv.effect); mix(seed, tv.turns); }
+    }
     mix(seed, s.ally_fainted_last_turn);
     mix(seed, s.has_wish_pending);
     if (s.has_wish_pending) { mix(seed, s.wish_turns); mix(seed, s.wish_hp); mix(seed, s.wish_slot); }
@@ -241,6 +257,6 @@ std::size_t state_hash(const BattleState& s) {
     mix(seed, s.is_trainer_battle);
     mix(seed, s.has_level_cap); if (s.has_level_cap) mix(seed, s.level_cap);
     // exp_participants: outer ordered, each inner set order-independent.
-    for (const auto& inner : s.exp_participants) hash_combine(seed, hash_int_set(inner));
+    for (const auto& inner : s.exp_participants) hash_combine(seed, hash_int_set(inner.members));
     return seed;
 }

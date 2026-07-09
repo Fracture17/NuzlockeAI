@@ -358,7 +358,7 @@ bool band_late_damage(BattleState& s, int si, int active_idx, int opp_idx, const
     if (has_ve(p, VE_NIGHTMARE) && p.status != STATUS_SLEEP) {
         std::vector<TimedVolatile> kept;
         for (const auto& tv : p.timed_volatiles) if (tv.effect != VE_NIGHTMARE) kept.push_back(tv);
-        p.timed_volatiles = kept;
+        p.timed_volatiles.assign_from(kept);
     }
     if ((p.volatiles & VOL_CURSED) && p.ability != AB_MAGIC_GUARD) {
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 4));
@@ -429,12 +429,12 @@ bool res_tick_timed_volatiles(BattleState& s, int si, int active_idx) {
                 else {
                     int flying_slot = 0;
                     for (size_t i = 0; i < base.size(); ++i) if (base[i] == TYPE_FLYING) { flying_slot = (int)i; break; }
-                    std::vector<int32_t> restored = p.types;
+                    std::vector<int32_t> restored(p.types.begin(), p.types.end());
                     restored.insert(restored.begin() + flying_slot, TYPE_FLYING);
                     bool base_has_normal = false; for (int32_t t : base) if (t == TYPE_NORMAL) base_has_normal = true;
                     std::vector<int32_t> filtered;
                     for (int32_t t : restored) if (t != TYPE_NORMAL || base_has_normal) filtered.push_back(t);
-                    p.types = filtered; p.has_types = true;
+                    p.types.assign_from(filtered); p.has_types = true;
                 }
             }
         } else if (effect == VE_DROWSY) {
@@ -452,7 +452,7 @@ bool res_tick_timed_volatiles(BattleState& s, int si, int active_idx) {
                 filtered.push_back(tv);
         new_timed = filtered;
     }
-    p.timed_volatiles = new_timed;
+    p.timed_volatiles.assign_from(new_timed);
     if (perish_faint) { p.fainted = true; p.hp = 0; cpp_release_inflicted_traps(s, si, active_idx); return true; }
     return false;
 }

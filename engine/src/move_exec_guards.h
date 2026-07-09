@@ -12,6 +12,7 @@
 #include "native_rng.h"   // NativeRng
 #include "oracle.h"       // OracleOverrides
 #include <cstdint>
+#include <vector>
 
 struct MoveData;
 

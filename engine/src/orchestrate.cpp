@@ -167,7 +167,9 @@ void cpp_apply_switch(BattleState& state, int side_idx, int new_slot, int source
     // In the real game loop cpp_run_one_turn always commits this; initialization here handles
     // test states and the very first post-faint switch of a battle.
     if (state.exp_participants.empty()) {
-        state.exp_participants.assign(state.side1.active_indices.size(), {});
+        // One empty ExpParticipantSet per side-1 active slot.
+        for (std::size_t i = 0; i < state.side1.active_indices.size(); ++i)
+            state.exp_participants.push_back(ExpParticipantSet{});
     }
 
     // Reset exp_participants for this slot when opponent (side 1) switches in.
@@ -175,7 +177,7 @@ void cpp_apply_switch(BattleState& state, int side_idx, int new_slot, int source
     // committed state field directly (mirrors what ctx.exp_participants[slot] = set()
     // followed by _finalize_turn commit would produce).
     if (side_idx == 1 && source_slot < (int)state.exp_participants.size())
-        state.exp_participants[source_slot].clear();
+        state.exp_participants[source_slot].members.clear();
 
     int old_active_idx = side.active_indices[source_slot];
     cpp_apply_switch_out_reset(state, side_idx, old_active_idx);
@@ -185,60 +187,28 @@ void cpp_apply_switch(BattleState& state, int side_idx, int new_slot, int source
 
     // Baton Pass: transfer stored state (stat_stages, volatiles, timed_volatiles, crit_stage,
     // sub_hp) BEFORE the turns_in_battle reset, mirroring Python's _apply_switch order.
-    // baton_pass_data_raw is a __tuple__ of (stages_t, vol_e, tv_t, crit_stage, sub_hp).
+    // baton_pass_data is the typed struct populated by _apply_baton_pass_capture.
     if (side.has_baton_pass_data) {
-        const nlohmann::json& raw = side.baton_pass_data_raw;
-        // Unwrap the outer __tuple__
-        auto it = raw.find("__tuple__");
-        if (it == raw.end() || !it->is_array() || it->size() != 5)
-            throw std::runtime_error("baton_pass: malformed baton_pass_data_raw outer tuple");
-        const nlohmann::json& outer = *it;
+        const BatonPassData& bp = side.baton_pass_data;
+        new_poke.stage0 = bp.stage0;
+        new_poke.stage1 = bp.stage1;
+        new_poke.stage2 = bp.stage2;
+        new_poke.stage3 = bp.stage3;
+        new_poke.stage4 = bp.stage4;
+        new_poke.stage5 = bp.stage5;
+        new_poke.stage6 = bp.stage6;
 
-        // [0]: __tuple__ of 7 stat stage ints
-        auto st_it = outer[0].find("__tuple__");
-        if (st_it == outer[0].end() || !st_it->is_array() || st_it->size() != 7)
-            throw std::runtime_error("baton_pass: malformed stat_stages tuple");
-        const nlohmann::json& stages = *st_it;
-        new_poke.stage0 = stages[0].get<int32_t>();
-        new_poke.stage1 = stages[1].get<int32_t>();
-        new_poke.stage2 = stages[2].get<int32_t>();
-        new_poke.stage3 = stages[3].get<int32_t>();
-        new_poke.stage4 = stages[4].get<int32_t>();
-        new_poke.stage5 = stages[5].get<int32_t>();
-        new_poke.stage6 = stages[6].get<int32_t>();
+        // Volatile bitmask: OR into existing volatiles
+        new_poke.volatiles |= bp.volatiles_bitmask;
 
-        // [1]: __enum__ Volatile bitmask — OR into existing volatiles
-        auto vol_vit = outer[1].find("value");
-        if (vol_vit == outer[1].end())
-            throw std::runtime_error("baton_pass: malformed volatiles enum");
-        new_poke.volatiles |= vol_vit->get<int32_t>();
+        // Timed volatiles: append transferred entries
+        for (const auto& tv : bp.timed_volatiles) new_poke.timed_volatiles.push_back(tv);
 
-        // [2]: __tuple__ of timed_volatile pairs (each is __tuple__ [VolatileEffect enum, turns])
-        auto tv_it = outer[2].find("__tuple__");
-        if (tv_it == outer[2].end() || !tv_it->is_array())
-            throw std::runtime_error("baton_pass: malformed timed_volatiles tuple");
-        for (const auto& entry : *tv_it) {
-            auto pair_it = entry.find("__tuple__");
-            if (pair_it == entry.end() || !pair_it->is_array() || pair_it->size() != 2)
-                throw std::runtime_error("baton_pass: malformed timed_volatile entry");
-            const nlohmann::json& pair = *pair_it;
-            auto eff_it = pair[0].find("value");
-            if (eff_it == pair[0].end())
-                throw std::runtime_error("baton_pass: malformed VolatileEffect enum");
-            TimedVolatile tv;
-            tv.effect = eff_it->get<int32_t>();
-            tv.turns  = pair[1].get<int32_t>();
-            new_poke.timed_volatiles.push_back(tv);
-        }
-
-        // [3]: crit_stage int
-        new_poke.crit_stage = outer[3].get<int32_t>();
-
-        // [4]: sub_hp int
-        new_poke.sub_hp = outer[4].get<int32_t>();
+        new_poke.crit_stage = bp.crit_stage;
+        new_poke.sub_hp     = bp.sub_hp;
 
         side.has_baton_pass_data = false;
-        side.baton_pass_data_raw = nullptr;
+        side.baton_pass_data = BatonPassData{};
     }
 
     new_poke.turns_in_battle = 0;

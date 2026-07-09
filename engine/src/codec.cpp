@@ -385,14 +385,43 @@ static SideState decode_side_state(const json& obj) {
 
     s.mega_used = require_field(f, "mega_used").get<bool>();
 
-    // baton_pass_data: null or a __tuple__ (complex nested)
+    // baton_pass_data: null or a __tuple__ of (stat_stages tuple[7], Volatile enum bitmask,
+    // timed_volatiles tuple, crit_stage int, sub_hp int). Decoded into the typed struct.
     const json& bpd_j = require_field(f, "baton_pass_data");
     if (bpd_j.is_null()) {
         s.has_baton_pass_data = false;
     } else {
         s.has_baton_pass_data = true;
-        // Store raw to reproduce exactly on re-encode
-        s.baton_pass_data_raw = bpd_j;
+        json outer = require_tuple(bpd_j);
+        if (outer.size() != 5)
+            throw std::runtime_error("codec: baton_pass_data outer must be 5-tuple");
+        // [0] stat_stages
+        json st = require_tuple(outer[0]);
+        if (st.size() != 7)
+            throw std::runtime_error("codec: baton_pass_data stat_stages must be 7-tuple");
+        s.baton_pass_data.stage0 = st[0].get<int32_t>();
+        s.baton_pass_data.stage1 = st[1].get<int32_t>();
+        s.baton_pass_data.stage2 = st[2].get<int32_t>();
+        s.baton_pass_data.stage3 = st[3].get<int32_t>();
+        s.baton_pass_data.stage4 = st[4].get<int32_t>();
+        s.baton_pass_data.stage5 = st[5].get<int32_t>();
+        s.baton_pass_data.stage6 = st[6].get<int32_t>();
+        // [1] Volatile bitmask (encoded as __enum__ Volatile)
+        s.baton_pass_data.volatiles_bitmask = decode_enum_or_int(outer[1], "Volatile");
+        // [2] timed_volatiles: __tuple__ of __tuple__ [VolatileEffect, int]
+        json tv_arr = require_tuple(outer[2]);
+        for (const auto& entry : tv_arr) {
+            json pair = require_tuple(entry);
+            if (pair.size() != 2)
+                throw std::runtime_error("codec: baton_pass_data tv entry must be 2-tuple");
+            TimedVolatile tv;
+            tv.effect = decode_enum(pair[0], "VolatileEffect");
+            tv.turns  = pair[1].get<int32_t>();
+            s.baton_pass_data.timed_volatiles.push_back(tv);
+        }
+        // [3] crit_stage, [4] sub_hp
+        s.baton_pass_data.crit_stage = outer[3].get<int32_t>();
+        s.baton_pass_data.sub_hp     = outer[4].get<int32_t>();
     }
 
     s.ally_fainted_last_turn = require_field(f, "ally_fainted_last_turn").get<bool>();
@@ -465,7 +494,22 @@ static json encode_side_state(const SideState& s) {
     fields["mega_used"] = s.mega_used;
 
     if (s.has_baton_pass_data) {
-        fields["baton_pass_data"] = s.baton_pass_data_raw;
+        const BatonPassData& bp = s.baton_pass_data;
+        json stages;
+        stages["__tuple__"] = json::array(
+            {bp.stage0, bp.stage1, bp.stage2, bp.stage3, bp.stage4, bp.stage5, bp.stage6});
+        json vol_e = encode_enum("Volatile", bp.volatiles_bitmask);
+        json tv_arr = json::array();
+        for (const auto& t : bp.timed_volatiles) {
+            json pair;
+            pair["__tuple__"] = json::array({encode_enum("VolatileEffect", t.effect), t.turns});
+            tv_arr.push_back(pair);
+        }
+        json tv_t;
+        tv_t["__tuple__"] = tv_arr;
+        json data;
+        data["__tuple__"] = json::array({stages, vol_e, tv_t, bp.crit_stage, bp.sub_hp});
+        fields["baton_pass_data"] = data;
     } else {
         fields["baton_pass_data"] = nullptr;
     }
@@ -570,10 +614,12 @@ static BattleState decode_battle_state(const json& obj) {
     json ep_tuple = require_tuple(require_field(f, "exp_participants"));
     for (const auto& fs_j : ep_tuple) {
         json inner = require_frozenset(fs_j);
+        ExpParticipantSet eps;
         std::vector<int32_t> participants;
         for (const auto& v : inner) participants.push_back(v.get<int32_t>());
         std::sort(participants.begin(), participants.end());
-        b.exp_participants.push_back(std::move(participants));
+        for (int32_t v : participants) eps.members.push_back(v);
+        b.exp_participants.push_back(eps);
     }
 
     return b;
@@ -626,10 +672,10 @@ static json encode_battle_state(const BattleState& b) {
     // exp_participants: __tuple__ of __frozenset__ of ints
     // Python sorts frozenset elements by repr; for plain ints, repr is just str(n), sorted numerically.
     json ep_tuple = json::array();
-    for (const auto& participants : b.exp_participants) {
-        // participants already sorted by int value (decoded that way)
+    for (const auto& eps : b.exp_participants) {
+        // members already sorted by int value (decoded that way)
         json inner = json::array();
-        for (int32_t v : participants) inner.push_back(v);
+        for (int32_t v : eps.members) inner.push_back(v);
         ep_tuple.push_back(json{{"__frozenset__", inner}});
     }
     fields["exp_participants"] = json{{"__tuple__", ep_tuple}};
