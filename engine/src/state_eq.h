@@ -17,6 +17,20 @@ bool state_equal(const BattleState& a, const BattleState& b);
 // Hash consistent with state_equal over the same field set.
 std::size_t state_hash(const BattleState& s);
 
+// Solver-view equality/hash: same field comparisons as state_equal / state_hash except
+// these excluded fields are ignored:
+//   - BattleState::turn_number
+//   - BattleState::prev_turn_order
+//   - BattleState::exp_participants
+// Rationale: these are pure bookkeeping and do not influence future gameplay decisions,
+// so states differing only in them belong to the same solver bucket. Excluding fewer
+// (duplicate buckets) is safe; excluding more silently merges genuinely different
+// states — do not extend this set without approval.
+// The hash contract is: state_equal_solver(a,b) => state_hash_solver(a)==state_hash_solver(b).
+// Both implementations share their field walk with the full-view versions.
+bool state_equal_solver(const BattleState& a, const BattleState& b);
+std::size_t state_hash_solver(const BattleState& s);
+
 // ---------------------------------------------------------------------------
 // rng resolver coverage map (C1.6 audit — HISTORICAL; the deferred list below has long
 // been ported). resolve_* names refer to src/rng.py. The C++ Category-B resolution

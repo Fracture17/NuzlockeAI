@@ -5,10 +5,27 @@
 #include "state_eq.h"
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <vector>
 
 namespace {
+
+// Pre-sorted set invariant guard. Set fields (imprisoned_moves, exp_participants inner
+// members) are decoded pre-sorted by the codec and compared as ordered vectors; an
+// unsorted writer would make logically-equal states compare UNEQUAL while the
+// order-independent hash still matches — a silent equality/hash disagreement. Fail
+// loudly instead (all build configs; fields hold <= 8 elements so the check is trivial).
+template <typename Container>
+inline void require_sorted_set(const Container& v, const char* what) {
+    for (std::size_t i = 1; i < v.size(); ++i) {
+        if (v[i - 1] > v[i]) {
+            std::fprintf(stderr, "state_eq: %s violates the pre-sorted set invariant\n", what);
+            std::abort();
+        }
+    }
+}
 
 // boost-style hash combine.
 inline void hash_combine(std::size_t& seed, std::size_t h) {
@@ -142,8 +159,11 @@ bool state_equal(const SideState& a, const SideState& b) {
            (!a.has_future_sight_pending ||
             (a.fs_turns == b.fs_turns && a.fs_damage == b.fs_damage &&
              a.fs_move == b.fs_move && a.fs_target_slot == b.fs_target_slot)) &&
-           // imprisoned_moves: set field, decoded pre-sorted -> vector compare is correct.
-           a.imprisoned_moves == b.imprisoned_moves &&
+           // imprisoned_moves: set field, decoded pre-sorted -> vector compare is correct
+           // (invariant enforced by require_sorted_set below).
+           (require_sorted_set(a.imprisoned_moves, "imprisoned_moves"),
+            require_sorted_set(b.imprisoned_moves, "imprisoned_moves"),
+            a.imprisoned_moves == b.imprisoned_moves) &&
            a.redirect_target == b.redirect_target &&
            a.redirect_is_rage_powder == b.redirect_is_rage_powder;
 }
@@ -152,20 +172,39 @@ bool state_equal(const SideState& a, const SideState& b) {
 // BattleState
 // ---------------------------------------------------------------------------
 
+// Shared BattleState equality walker. Full view compares every field; solver view skips
+// turn_number, prev_turn_order, and exp_participants (documented in state_eq.h).
+static bool battle_state_equal_impl(const BattleState& a, const BattleState& b,
+                                    bool include_bookkeeping) {
+    bool base = state_equal(a.side0, b.side0) && state_equal(a.side1, b.side1) &&
+                a.weather == b.weather && a.weather_turns == b.weather_turns &&
+                a.terrain == b.terrain && a.terrain_turns == b.terrain_turns &&
+                equal_pseudo(a.pseudo_weather, b.pseudo_weather) &&
+                a.echoed_voice_multiplier == b.echoed_voice_multiplier &&
+                a.echoed_voice_used_this_turn == b.echoed_voice_used_this_turn &&
+                a.battle_last_move == b.battle_last_move && a.format == b.format &&
+                a.turn_order == b.turn_order &&
+                a.is_trainer_battle == b.is_trainer_battle &&
+                a.has_level_cap == b.has_level_cap &&
+                (!a.has_level_cap || a.level_cap == b.level_cap);
+    if (!base) return false;
+    if (include_bookkeeping) {
+        if (a.turn_number != b.turn_number) return false;
+        if (!(a.prev_turn_order == b.prev_turn_order)) return false;
+        // exp_participants: outer ordered, inner sets pre-sorted (invariant enforced).
+        for (const auto& inner : a.exp_participants) require_sorted_set(inner.members, "exp_participants");
+        for (const auto& inner : b.exp_participants) require_sorted_set(inner.members, "exp_participants");
+        if (!(a.exp_participants == b.exp_participants)) return false;
+    }
+    return true;
+}
+
 bool state_equal(const BattleState& a, const BattleState& b) {
-    return state_equal(a.side0, b.side0) && state_equal(a.side1, b.side1) &&
-           a.weather == b.weather && a.weather_turns == b.weather_turns &&
-           a.terrain == b.terrain && a.terrain_turns == b.terrain_turns &&
-           equal_pseudo(a.pseudo_weather, b.pseudo_weather) &&
-           a.turn_number == b.turn_number &&
-           a.echoed_voice_multiplier == b.echoed_voice_multiplier &&
-           a.echoed_voice_used_this_turn == b.echoed_voice_used_this_turn &&
-           a.battle_last_move == b.battle_last_move && a.format == b.format &&
-           a.turn_order == b.turn_order && a.prev_turn_order == b.prev_turn_order &&
-           a.is_trainer_battle == b.is_trainer_battle &&
-           a.has_level_cap == b.has_level_cap &&
-           (!a.has_level_cap || a.level_cap == b.level_cap) &&
-           a.exp_participants == b.exp_participants;  // outer ordered, inner pre-sorted
+    return battle_state_equal_impl(a, b, /*include_bookkeeping=*/true);
+}
+
+bool state_equal_solver(const BattleState& a, const BattleState& b) {
+    return battle_state_equal_impl(a, b, /*include_bookkeeping=*/false);
 }
 
 // ---------------------------------------------------------------------------
@@ -243,20 +282,33 @@ std::size_t hash_side(const SideState& s) {
 
 }  // namespace
 
-std::size_t state_hash(const BattleState& s) {
+// Shared BattleState hash walker. Order of field mixing matches state_equal semantics.
+// Solver view skips turn_number, prev_turn_order, and exp_participants entirely.
+static std::size_t battle_state_hash_impl(const BattleState& s, bool include_bookkeeping) {
     std::size_t seed = 0;
     hash_combine(seed, hash_side(s.side0));
     hash_combine(seed, hash_side(s.side1));
     mix(seed, s.weather); mix(seed, s.weather_turns);
     mix(seed, s.terrain); mix(seed, s.terrain_turns);
     for (const auto& pw : s.pseudo_weather) { mix(seed, pw.effect); mix(seed, pw.turns); }
-    mix(seed, s.turn_number); mix(seed, s.echoed_voice_multiplier);
+    mix(seed, s.echoed_voice_multiplier);
     mix(seed, s.echoed_voice_used_this_turn); mix(seed, s.battle_last_move); mix(seed, s.format);
     for (int32_t t : s.turn_order) mix(seed, t);
-    for (int32_t t : s.prev_turn_order) mix(seed, t);
     mix(seed, s.is_trainer_battle);
     mix(seed, s.has_level_cap); if (s.has_level_cap) mix(seed, s.level_cap);
-    // exp_participants: outer ordered, each inner set order-independent.
-    for (const auto& inner : s.exp_participants) hash_combine(seed, hash_int_set(inner.members));
+    if (include_bookkeeping) {
+        mix(seed, s.turn_number);
+        for (int32_t t : s.prev_turn_order) mix(seed, t);
+        // exp_participants: outer ordered, each inner set order-independent.
+        for (const auto& inner : s.exp_participants) hash_combine(seed, hash_int_set(inner.members));
+    }
     return seed;
+}
+
+std::size_t state_hash(const BattleState& s) {
+    return battle_state_hash_impl(s, /*include_bookkeeping=*/true);
+}
+
+std::size_t state_hash_solver(const BattleState& s) {
+    return battle_state_hash_impl(s, /*include_bookkeeping=*/false);
 }

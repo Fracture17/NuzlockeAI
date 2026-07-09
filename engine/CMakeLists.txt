@@ -69,6 +69,7 @@ add_library(nuzlocke_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ai_scorer_dist.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ai_analytic.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/game_driver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver_turn.cpp
 )
 # Required: static lib links into a pybind11 shared module, so all objects need PIC.
 set_target_properties(nuzlocke_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
