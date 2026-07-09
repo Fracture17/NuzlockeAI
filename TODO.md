@@ -221,6 +221,18 @@ speed-reducing move scoring (singles and doubles).
 Spread damaging moves with guaranteed stat reductions get an extra +1 in doubles; the
 path is unimplemented. Affected mechanic: AI stat-reducing move scoring in doubles.
 
+## Pursuit switch-interception unimplemented (both engines)
+
+R&B keeps vanilla gen-8 Pursuit: if the target switches out, Pursuit executes before the
+switch at 80 BP and never misses (RECORDS/Moves.md). Neither the retired Python engine nor
+engine/src/ implements the interception — Pursuit is a plain 40 BP move; only the AI scorer
+references the mechanic (engine/src/ai_scorer.cpp:1006). Implementing it changes battle
+behavior, so it breaks golden-trace parity: schedule post-old-repo-retirement with an
+INTENTIONAL_DIVERGENCES entry. The dead-silent LogEvent PURSUIT_INTERCEPT (44) lands with
+the mechanic. See RECORDS/StageE.md §2.
+
+---
+
 ---
 
 ## Dropped at Stage C
