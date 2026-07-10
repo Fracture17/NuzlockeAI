@@ -12,13 +12,14 @@ from liveplay.battle_types import MatchResult, ActionGroup
 from liveplay.state.battle import BattleState
 from liveplay.state.pokemon import Volatile, VolatileEffect, Stat, compute_stat, PokemonState
 from liveplay.data.species import Species, SPECIES_DATA
-from liveplay.data.moves import Move, MOVE_DATA, MoveTarget
 from liveplay.data.status import Status
 from liveplay.data.growth_rate import exp_for_level
 from liveplay.data.name_aliases import emulator_species_name
 from liveplay.hp_stability import hp_range
 from liveplay.engine_select import SimulationError
 from liveplay.state_transition import _species_match_threshold
+# Shared pure predicates/constants (re-exported for callers that import them from here).
+from liveplay.sweep_common import _SPREAD_TARGETS, _msg_is_foe, _move_is_spread
 
 # ---------------------------------------------------------------------------
 # Module-level constant tables (ported verbatim from old simulation_runner.py)
@@ -85,8 +86,6 @@ _HEAL_RESTORE_STRING_IDS = frozenset({
 })
 
 _CHEEK_POUCH_LABEL = "CHEEK POUCH"
-
-_SPREAD_TARGETS = frozenset({MoveTarget.ALL_ADJACENT_FOES, MoveTarget.ALL_ADJACENT, MoveTarget.ALL})
 
 # HP-changing log events: (mon-identity kwarg, amount kwarg, sign).
 _HP_CHANGE_EVENTS = {
@@ -245,12 +244,6 @@ def _apply_observed_rampage_end(state: BattleState, messages: list) -> BattleSta
     if not changed:
         return state
     return dataclasses.replace(state, sides=tuple(new_sides))
-
-
-def _msg_is_foe(msg: MatchResult) -> bool:
-    """True if the reconstructed message carries the opponent 'Foe' prefix (→ side 1)."""
-    text = (msg.matched_text or "").strip().lower()
-    return text.startswith("foe ")
 
 
 def _observed_event_skeleton(all_messages: list[MatchResult]) -> list[tuple]:
@@ -837,11 +830,3 @@ def has_fainted_active(state: BattleState) -> bool:
         if any(side.team[team_idx].fainted for team_idx in side.active_indices):
             return True
     return False
-
-
-def _move_is_spread(move_enum) -> bool:
-    """Return True if move_enum is a spread move (hits multiple foes simultaneously)."""
-    if move_enum is None:
-        return False
-    md = MOVE_DATA.get(move_enum)
-    return md is not None and md.target in _SPREAD_TARGETS
