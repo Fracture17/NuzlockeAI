@@ -2125,3 +2125,73 @@ file = "golden_traces_100k/"
 confidence = "requirement"
 rationale = "100k trace corpus is rsync-copied and git-ignored (862MB); the full replay gate (--jobs 0) runs in this repo from day one alongside the committed frozen 1028-trace gate in tests/fixtures/golden_traces."
 updated = "2026-07-08T19:39:26.935Z"
+
+[[record]]
+name = "effect_duration_int8"
+file = "engine/src/state.h"
+confidence = "requirement"
+rationale = "USER 2026-07-09: effect durations are 0-8 turns or infinite (weather/terrain/binding set by ability/battle script, encoded -1). Duration fields fit int8_t. TimedVolatile.turns stays int32 (doubles as payload: source id / move slot)."
+updated = "2026-07-10T02:05:27.980Z"
+
+[[record]]
+name = "trivially_copyable_state"
+file = "engine/src/state.h"
+confidence = "settled"
+rationale = "D2: BattleState is memcpy-able (static_assert). All state vectors -> fixed-cap InlineVec (fail-loud abort on overflow); baton_pass json evicted to typed BatonPassData (codec wire unchanged). Enables slab NodePool + cheap solver copies."
+updated = "2026-07-10T02:05:29.448Z"
+
+[[record]]
+name = "solver_state_projection"
+file = "engine/src/state_eq.cpp"
+confidence = "requirement"
+rationale = "USER 2026-07-09: solver equal/hash track everything a mechanic reads; exclude ONLY inert bookkeeping (turn_number, prev_turn_order, exp_participants). No more exclusions without proof+approval; over-merge silently breaks the guaranteed-win search."
+updated = "2026-07-10T02:05:33.846Z"
+
+[[record]]
+name = "sorted_set_invariant"
+file = "engine/src/state_eq.cpp"
+confidence = "settled"
+rationale = "imprisoned_moves/exp_participants inner sets are codec pre-sorted; equality compares ordered vectors, hash mixes order-independent. Unsorted writer = silent equal/hash disagreement, so state_equal aborts loudly on violation."
+updated = "2026-07-10T02:05:35.543Z"
+
+[[record]]
+name = "oracle_consume_once"
+file = "engine/src/oracle.h"
+confidence = "settled"
+rationale = "D3: OracleOverrides re-fire replaced by consume-once queues (+SPEED_TIE) mirroring Python _rng_inject; each occurrence pops one, exhaustion throws NeedsRNG (loud). Scalar override JSON still accepted for back-compat."
+updated = "2026-07-10T02:05:40.721Z"
+
+[[record]]
+name = "catb_occurrence_injection"
+file = "engine/src/logger.h"
+confidence = "settled"
+rationale = "D3: occurrence-keyed Cat-B injection ((event,occ)->outcome) checked before threshold/RNG; verify_exhausted throws on leftovers. GameDriver resets occurrence counters each turn start so injection indices cannot silently drift."
+updated = "2026-07-10T02:05:42.620Z"
+
+[[record]]
+name = "rng_logger_participants"
+file = "engine/src/logger.h"
+confidence = "settled"
+rationale = "D3 impl of cpp_analytical_rng_logger: global-ptr toggle (nullptr=off), POD entries. Participants plumbed to all Cat-B det-wrappers (both-sides where known; self-only for Endure/Protect/self-draws); SPEED_TIE encoded side*10+slot."
+updated = "2026-07-10T02:05:46.961Z"
+
+[[record]]
+name = "solver_direct_turn_entry"
+file = "engine/src/solver_turn.h"
+confidence = "settled"
+rationale = "D4: cpp_run_one_turn_solver is a thin non-throwing wrapper over cpp_run_one_turn (pre-loaded overrides, no policies, no JSON). Unanswered Cat-A pause -> ok=false (solver enumerated RNG wrong = bug). Live-play/bridge path unchanged."
+updated = "2026-07-10T02:05:50.229Z"
+
+[[record]]
+name = "batched_seam_api_deferred"
+file = "engine/bindings/module.cpp"
+confidence = "settled"
+rationale = "D5 bench: batching amortizes only the ~53ns pybind crossing, not the ~139us/state codec (each still decodes). D4 direct path (cpp_run_one_turn_solver) already pays zero JSON on the hot path, so a batched JSON API is unjustified; deferred."
+updated = "2026-07-10T02:05:54.727Z"
+
+[[record]]
+name = "ffp_contract_off_kept"
+file = "engine/"
+confidence = "settled"
+rationale = "-ffp-contract=off stays: traces record Python IEEE doubles w/o FMA; contraction fuses a*b+c in the damage chain -> off-by-1 -> trace divergence. Also needed for reproducible solver bucket replays. Perf cost negligible (integer-heavy engine)."
+updated = "2026-07-10T02:05:56.617Z"
