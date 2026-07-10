@@ -97,8 +97,14 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
               TurnLuck tl1 = turn_luck_from_json(j["turn_luck_p1"]);
               bool mega_p0 = j.value("mega_p0", false);
               bool mega_p1 = j.value("mega_p1", false);
+              // finalize_on_post_faint (default false): when true, a fainted active with a
+              // live bench does NOT throw "unported: post_faint_switch" — the turn finalizes
+              // with fainted actives in place so the caller can apply the observed replacement
+              // via apply_switch between turns (sweep replay layer, E2 Task 4 decision).
+              bool finalize_on_post_faint = j.value("finalize_on_post_faint", false);
 
-              cpp_run_one_turn(s, a0, a1, luck_p0, luck_p1, tl0, tl1, mega_p0, mega_p1);
+              cpp_run_one_turn(s, a0, a1, luck_p0, luck_p1, tl0, tl1, mega_p0, mega_p1,
+                               finalize_on_post_faint);
 
               nlohmann::json out;
               out["state"] = nlohmann::json::parse(battle_state_to_json(s));
@@ -106,6 +112,8 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
           },
           "Run one full deterministic turn: deserialize actions/luck/turn-luck, return {state}. "
           "action_p0/action_p1 may be a single dict (singles) or a list of dicts (doubles). "
+          "Optional finalize_on_post_faint (default false): finalize with fainted actives in "
+          "place instead of throwing, for the sweep replay layer. "
           "Pause boundaries raise RuntimeError(unported:).");
 
     // C1.7h Stage 1+4: post-faint switch primitive. JSON-in/JSON-out.
