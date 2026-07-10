@@ -9,6 +9,7 @@
 #include "type_chart_lookup.h"
 #include "species_types_lookup.h"
 #include "damage.h"
+#include "event_log.h"            // rich_log_stat_copy
 
 #include <algorithm>
 #include <array>
@@ -1409,6 +1410,7 @@ static bool apply_complex_interaction(BattleState& s, int side_idx, int32_t move
         mon.crit_stage = target.crit_stage;
         if (has_timed_volatile(target, VE_LASER_FOCUS) && !has_timed_volatile(mon, VE_LASER_FOCUS))
             mon.timed_volatiles.push_back({VE_LASER_FOCUS, 1});
+        rich_log_stat_copy(s.turn_number, side_idx, mon.species, target.species);
         return true;
     }
     if (move == MOVE_TRANSFORM) {

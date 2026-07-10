@@ -240,6 +240,103 @@ class CapturingLogger(BattleLogger):
     def count(self, event_type: LogEvent, **filters) -> int:
         return len(self.all_of(event_type, **filters) if filters else self.of(event_type))
 
+    @classmethod
+    def from_cpp(cls, rich_log) -> 'CapturingLogger':
+        """Rebuild a CapturingLogger from a native RichEventLog: each entry -> (LogEvent, kwargs).
+
+        Reconstructs enums (Species/Move) and tag strings, dropping RICH_UNSET fields.
+        Fails loud on an unmapped event or an unknown tag int (see _rich_kwargs).
+        """
+        inst = cls()
+        for i in range(len(rich_log)):
+            entry = rich_log[i]
+            event = LogEvent(entry.event)
+            inst._events.append((event, _rich_kwargs(event, entry)))
+        return inst
+
+
+# Must match engine/src/event_log.h RICH_UNSET.
+_RICH_UNSET = -2147483648
+
+
+def _present(value: int) -> bool:
+    """A rich-entry int field is set iff it is not the RICH_UNSET sentinel."""
+    return value != _RICH_UNSET
+
+
+# Tag int -> canonical string maps (mirror event_log.h SourceTag/VolatileTag/CauseTag).
+# The engine stores string kwargs as int tags to keep entries POD; this is the single
+# place they are re-expanded. NONE (0) means "no such kwarg" -> dropped. E1b grows these.
+_SOURCE_TAG_STRINGS = {1: "move", 2: "berry", 3: "cheek_pouch", 4: "ability",
+                       5: "item", 6: "residual"}
+_VOLATILE_TAG_STRINGS = {1: "confused", 2: "taunt", 3: "encore", 4: "leech_seeded"}
+_CAUSE_TAG_STRINGS: dict = {}
+
+
+def _source_tag_str(tag: int) -> 'str | None':
+    if tag == 0:
+        return None
+    if tag not in _SOURCE_TAG_STRINGS:
+        raise ValueError(f"from_cpp: unknown source_tag int {tag}")
+    return _SOURCE_TAG_STRINGS[tag]
+
+
+def _volatile_tag_str(tag: int) -> 'str | None':
+    if tag == 0:
+        return None
+    if tag not in _VOLATILE_TAG_STRINGS:
+        raise ValueError(f"from_cpp: unknown volatile_tag int {tag}")
+    return _VOLATILE_TAG_STRINGS[tag]
+
+
+def _cause_tag_str(tag: int) -> 'str | None':
+    if tag == 0:
+        return None
+    if tag not in _CAUSE_TAG_STRINGS:
+        raise ValueError(f"from_cpp: unknown cause_tag int {tag}")
+    return _CAUSE_TAG_STRINGS[tag]
+
+
+def _kw_charge(entry) -> dict:
+    from liveplay.data.species import Species
+    from liveplay.data.moves import Move
+    return {"user": Species(entry.species), "move": Move(entry.aux0)}
+
+
+def _kw_baton_pass(entry) -> dict:
+    from liveplay.data.species import Species
+    return {"side": entry.side, "pokemon": Species(entry.species)}
+
+
+def _kw_stat_copy(entry) -> dict:
+    from liveplay.data.species import Species
+    return {"side": entry.side, "target": Species(entry.species),
+            "source_species": Species(entry.aux0)}
+
+
+# Dispatch: LogEvent -> function(entry) -> kwargs dict. E1b extends this cleanly.
+# E1a covers only the five "silent" events.
+_RICH_EVENT_KWARGS = {
+    LogEvent.CHARGE_TURN: _kw_charge,
+    LogEvent.SEMI_INVULNERABLE_ENTER: _kw_charge,
+    LogEvent.SEMI_INVULNERABLE_EXIT: _kw_charge,
+    LogEvent.BATON_PASS_TRANSFER: _kw_baton_pass,
+    LogEvent.STAT_COPY: _kw_stat_copy,
+}
+
+
+def _rich_kwargs(event: LogEvent, entry) -> dict:
+    """Reconstruct the kwargs dict for one rich entry; fail loud on an unmapped event."""
+    handler = _RICH_EVENT_KWARGS.get(event)
+    if handler is None:
+        raise ValueError(f"from_cpp: no kwargs mapping for {event!r}")
+    return handler(entry)
+
+
+def capturing_from_cpp(rich_log) -> 'CapturingLogger':
+    """Module-level alias for CapturingLogger.from_cpp."""
+    return CapturingLogger.from_cpp(rich_log)
+
 
 def format_state(state: 'BattleState') -> str:
     """Multi-line summary of BattleState: active Pokemon, HP, status, stat stages, weather, turn."""

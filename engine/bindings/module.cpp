@@ -36,6 +36,7 @@
 #include "ai_analytic.h"
 #include "game_driver.h"
 #include "logger.h"           // CategoryBInjection / CategoryBOccurrenceCounters bindings
+#include "event_log.h"        // RichEventLog / RichEventEntry bindings (E1a)
 
 namespace py = pybind11;
 
@@ -640,4 +641,59 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
           py::arg("counters").none(true),
           "Register (or clear with None) the global CategoryBOccurrenceCounters used by "
           "GameDriver's per-turn reset.");
+
+    // --- E1a: rich LogEvent-stream logger (event_log.h) ---
+    // Mirrors the CategoryBOccurrenceCounters binding pattern. RichEventEntry fields are
+    // read-only; string kwargs are int-enum tags whose strings live in the Python shim.
+    py::class_<RichEventEntry>(m, "RichEventEntry")
+        .def_readonly("turn", &RichEventEntry::turn)
+        .def_readonly("event", &RichEventEntry::event)
+        .def_readonly("species", &RichEventEntry::species)
+        .def_readonly("side", &RichEventEntry::side)
+        .def_readonly("amount", &RichEventEntry::amount)
+        .def_readonly("stages", &RichEventEntry::stages)
+        .def_readonly("attacker_side", &RichEventEntry::attacker_side)
+        .def_readonly("attacker_slot", &RichEventEntry::attacker_slot)
+        .def_readonly("defender_side", &RichEventEntry::defender_side)
+        .def_readonly("status", &RichEventEntry::status)
+        .def_readonly("new_level", &RichEventEntry::new_level)
+        .def_readonly("aux0", &RichEventEntry::aux0)
+        .def_readonly("aux1", &RichEventEntry::aux1)
+        .def_readonly("source_tag", &RichEventEntry::source_tag)
+        .def_readonly("volatile_tag", &RichEventEntry::volatile_tag)
+        .def_readonly("cause_tag", &RichEventEntry::cause_tag);
+
+    py::class_<RichEventLog>(m, "RichEventLog")
+        .def(py::init<>())
+        .def("size", &RichEventLog::size)
+        .def("at", &RichEventLog::at, py::arg("i"),
+             py::return_value_policy::reference_internal)
+        .def("clear", &RichEventLog::clear)
+        .def("__len__", &RichEventLog::size)
+        .def("__getitem__", [](const RichEventLog& self, size_t i) -> const RichEventEntry& {
+            if (i >= self.size()) throw py::index_error();
+            return self.at(i);
+        }, py::return_value_policy::reference_internal)
+        .def("__iter__", [](const RichEventLog& self) {
+            return py::make_iterator(self.entries.begin(), self.entries.end());
+        }, py::keep_alive<0, 1>());
+
+    m.def("set_rich_event_log",
+          [](RichEventLog* log) { set_rich_event_log(log); },
+          py::arg("log").none(true),
+          "Register (or clear with None) the global rich LogEvent-stream logger.");
+
+    // Emit helpers exposed so the Python shim/tests can build entries via the same
+    // single source of truth as the engine (no duplicated field layout in Python).
+    m.def("rich_log_charge_turn", &rich_log_charge_turn,
+          py::arg("turn"), py::arg("species"), py::arg("move"));
+    m.def("rich_log_semi_invuln_enter", &rich_log_semi_invuln_enter,
+          py::arg("turn"), py::arg("species"), py::arg("move"));
+    m.def("rich_log_semi_invuln_exit", &rich_log_semi_invuln_exit,
+          py::arg("turn"), py::arg("species"), py::arg("move"));
+    m.def("rich_log_baton_pass_transfer", &rich_log_baton_pass_transfer,
+          py::arg("turn"), py::arg("side"), py::arg("species"));
+    m.def("rich_log_stat_copy", &rich_log_stat_copy,
+          py::arg("turn"), py::arg("side"), py::arg("copier_species"),
+          py::arg("source_species"));
 }

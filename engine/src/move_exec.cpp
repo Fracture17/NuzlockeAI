@@ -15,6 +15,7 @@
 #include "exp.h"                 // cpp_flush_opponent_faint_exp
 #include "core_leaf.h"           // cpp_compute_fixed_damage, PsywaveLuck
 #include "type_chart_lookup.h"   // cpp_type_effectiveness
+#include "event_log.h"           // rich_log_baton_pass_transfer
 #include "../generated/move_data.h"
 
 #include <algorithm>
@@ -518,6 +519,11 @@ void handle_status_action(BattleState& state, int side_idx, int defender_idx, in
         }
         if (bench) {
             const PokemonState& bp = active_mon(state, side_idx);
+            // BATON_PASS_TRANSFER fires once, only when a pass actually happens. The
+            // switch-in target is not yet resolved here (queued via pending_switches), so
+            // we log the passer's (currently active) species — the mon whose state is
+            // being carried forward.
+            rich_log_baton_pass_transfer(state.turn_number, side_idx, bp.species);
             // CONFUSED|LEECH_SEEDED|CURSED|AQUA_RING|INGRAIN|POWER_TRICK|SUBSTITUTE|FLASH_FIRE
             constexpr int32_t BP_VOLATILE_ALLOWLIST = 1282055;
             int32_t bp_vol = bp.volatiles & BP_VOLATILE_ALLOWLIST;

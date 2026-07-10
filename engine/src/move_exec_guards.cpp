@@ -10,6 +10,7 @@
 #include "effects_consts.h"
 #include "damage.h"              // cpp_calculate_damage, LuckProfileC
 #include "type_chart_lookup.h"   // cpp_type_effectiveness
+#include "event_log.h"           // rich_log_charge_turn / semi_invuln_enter / exit
 #include "../generated/move_data.h"
 
 #include <algorithm>
@@ -416,6 +417,12 @@ bool cpp_pre_damage_checks(BattleState& state, int side_idx, int defender_idx,
         PokemonState& attacker = active_mon(state, side_idx);
         bool is_charging = (attacker.charging_move_slot == eff_slot && eff_slot >= 0);
         if (is_charging) {
+            // SEMI_INVULNERABLE_EXIT fires before the release damage resolves, and only
+            // when the mon actually was semi-invulnerable (Fly/Dig/Dive/... — not a plain
+            // charge move like Skull Bash). Emit before the volatile is cleared below.
+            if (is_semi_invuln_move(move) || has_semi_invuln_ve(attacker)) {
+                rich_log_semi_invuln_exit(state.turn_number, attacker.species, move);
+            }
             attacker.charging_move_slot = -1;
             auto& tv = attacker.timed_volatiles;
             // In-place filter (InlineVec has no erase-range API).
@@ -438,7 +445,11 @@ bool cpp_pre_damage_checks(BattleState& state, int side_idx, int defender_idx,
             }
             if (!skip_charge) {
                 PokemonState& a = active_mon(state, side_idx);
+                // CHARGE_TURN fires for ALL two-turn charge moves on the charge turn;
+                // SEMI_INVULNERABLE_ENTER only when the move is semi-invulnerable.
+                rich_log_charge_turn(state.turn_number, a.species, move);
                 if (is_semi_invuln_move(move)) {
+                    rich_log_semi_invuln_enter(state.turn_number, a.species, move);
                     a.timed_volatiles.push_back(TimedVolatile{VE_SEMI_INVULNERABLE, -1});
                 }
                 // Called two-turn move (Metronome/Copycat/Mirror Move): the slot holds the
