@@ -47,11 +47,10 @@ def test_run_candidate_sweep_stub():
         run_candidate_sweep([], [], [])
 
 
-def test_enumerate_legal_actions_stub():
+def test_enumerate_legal_actions_importable():
+    # enumerate_legal_actions is now a real implementation (not a stub); verify it is importable.
     from liveplay.engine_select import enumerate_legal_actions
-    # Minimal dummy state — stub must raise before inspecting it.
-    with pytest.raises(NotImplementedError):
-        enumerate_legal_actions(None, 0)
+    assert callable(enumerate_legal_actions)
 
 
 # ---------------------------------------------------------------------------

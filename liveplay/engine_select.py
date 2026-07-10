@@ -1,8 +1,9 @@
-# Engine seam: SimulationError class and Stage-E stubs for run_candidate_sweep and
-# enumerate_legal_actions. Bodies will be swapped in Stage E when the C++ sweep is wired.
+# Engine seam: SimulationError, enumerate_legal_actions (Python impl), and Stage-E stub for run_candidate_sweep.
 from __future__ import annotations
 
 from typing import Optional, TYPE_CHECKING
+
+from liveplay.actions import enumerate_legal_actions  # noqa: F401 (re-exported)
 
 if TYPE_CHECKING:
     from liveplay.battle_types import MatchResult, ActionGroup
@@ -46,6 +47,3 @@ def run_candidate_sweep(
     raise NotImplementedError("Stage E: C++ sweep not wired")
 
 
-def enumerate_legal_actions(state: "BattleState", side_idx: int, slot: int = 0) -> list:
-    """Returns all Actions the active Pokemon on the given side may legally take this turn."""
-    raise NotImplementedError("Stage E: C++ sweep not wired")
