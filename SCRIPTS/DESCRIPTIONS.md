@@ -16,3 +16,4 @@ Documented scripts in the new NuzlockeAI repo.
 - [vision_check.py](vision_check.py) — Captures all 4 battle screen regions from a live mGBA window and saves PNGs to /tmp/vision for visual calibration of region coords.
 - [ocr_check.py](ocr_check.py) — Loads the 4 crop PNGs from /tmp/vision/ and prints OCR results for each region. Run after crop_check.py.
 - [crop_check.py](crop_check.py) — Opens /tmp/vision/frame.png and saves the 4 cropped regions to /tmp/vision/ for calibrating regions.py.
+- [gen_seam_payload.py](gen_seam_payload.py) — Extracts a golden-trace initial_state into /tmp/d5_seam_payload.json for the native D5 seam benchmark (engine/build/nuzlocke_bench_seam). `--trace`/`--out` override the fixed default trace/path.

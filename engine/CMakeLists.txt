@@ -105,3 +105,11 @@ add_executable(nuzlocke_native_tests ${NATIVE_TEST_SOURCES})
 target_link_libraries(nuzlocke_native_tests PRIVATE nuzlocke_core Catch2::Catch2WithMain)
 
 add_test(NAME native_tests COMMAND nuzlocke_native_tests)
+
+# D5 seam benchmark: standalone throughput harness for the solver hot path and the
+# JSON bridge overhead. Deliberately EXCLUDE_FROM_ALL and NOT an add_test() — it must
+# never slow the default build or the correctness ctest run. Build on demand:
+#   cmake --build build --target nuzlocke_bench_seam
+add_executable(nuzlocke_bench_seam EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/bench/bench_solver_seam.cpp)
+target_link_libraries(nuzlocke_bench_seam PRIVATE nuzlocke_core)
