@@ -3,6 +3,7 @@
 #include "exp.h"
 #include "species_exp_lookup.h"
 #include "stats.h"
+#include "event_log.h"           // rich_log_exp_gain / rich_log_level_up
 
 #include <algorithm>
 #include <cmath>
@@ -150,9 +151,18 @@ void cpp_distribute_exp(BattleState& state, int fainted_team_idx,
         if (team_idx >= (int32_t)player.team.size()) continue;
         PokemonState& winner = player.team[team_idx];
         if (winner.fainted && !allow_fainted_winners) continue;
+        int32_t old_level = winner.level;
         int32_t exp_amount = cpp_calc_exp_gain(fainted_species, fainted_level, winner.level);
         SpeciesExpData wd = cpp_species_exp_data(winner.species);
-        cpp_apply_exp_gain(winner, exp_amount, state.has_level_cap, state.level_cap, wd.growth_rate);
+        int32_t net_gained = cpp_apply_exp_gain(winner, exp_amount, state.has_level_cap,
+                                                state.level_cap, wd.growth_rate);
+        // EXP_GAIN + LEVEL_UP observation (Python exp.py:152-154). The "gained X Exp"
+        // message shows GROSS exp_amount when the mon actually gained (net>0); a mon
+        // already at the cap gains nothing and shows no message, so log 0 to preserve
+        // the message count. One LEVEL_UP per level crossed.
+        rich_log_exp_gain(state.turn_number, winner.species, net_gained > 0 ? exp_amount : 0);
+        for (int32_t nl = old_level + 1; nl <= winner.level; ++nl)
+            rich_log_level_up(state.turn_number, winner.species, nl);
     }
 
     exp_participants[slot_pos].clear();

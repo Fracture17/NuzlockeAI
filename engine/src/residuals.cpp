@@ -9,6 +9,7 @@
 #include "exp.h"
 #include "forced_trace.h"
 #include "rng_resolver.h"  // RngLogCtx for participant plumbing on residual procs
+#include "event_log.h"     // rich_log_status_apply (Yawn/Drowsy sleep)
 
 #include <algorithm>
 #include <stdexcept>
@@ -125,6 +126,7 @@ bool band_weather(BattleState& s, int si, int active_idx, int32_t weather) {
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 8));
 
     if (p.hp == 0) {
+        rich_log_faint(s.turn_number, p.species, si);
         p.fainted = true;
         notify_faint_soul_heart(s);
         cpp_release_inflicted_traps(s, si, active_idx);
@@ -182,7 +184,7 @@ bool band_item_heal(BattleState& s, int si, int active_idx) {
             p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 16));
         else {
             p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 8));
-            if (p.hp == 0) { p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
+            if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
         }
     }
     return false;
@@ -230,7 +232,7 @@ bool band_leech_seed(BattleState& s, int si, int active_idx, int opp_idx) {
             opp.hp = std::min(opp.max_hp, opp.hp + heal);
         }
     }
-    if (p.hp == 0) { p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
+    if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
     return false;
 }
 
@@ -246,7 +248,7 @@ bool band_poison(BattleState& s, int si, int active_idx, int opp_idx, const Resi
     } else if (p.status == STATUS_POISON && p.ability != AB_MAGIC_GUARD) {
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 8));
     }
-    if (p.hp == 0) { p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
+    if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
     check_berry(s, si, opp_idx, luck_for(L, si).rng, luck_for(L, si).overrides);
     return false;
 }
@@ -258,7 +260,7 @@ bool band_burn(BattleState& s, int si, int active_idx, int opp_idx, const Residu
         int32_t divisor = (p.ability == AB_HEATPROOF) ? 32 : 16;
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / divisor));
     }
-    if (p.hp == 0) { p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
+    if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
     check_berry(s, si, opp_idx, luck_for(L, si).rng, luck_for(L, si).overrides);
     return false;
 }
@@ -326,7 +328,10 @@ bool band_late(BattleState& s, int si, int active_idx, int opp_idx, int32_t weat
         int32_t nh = std::max(0, opp.hp - dmg);
         opp.hp = nh;
         opp.fainted = (nh == 0);
-        if (nh == 0) cpp_release_inflicted_traps(s, opp_idx, opp_active_idx);
+        if (nh == 0) {
+            rich_log_faint(s.turn_number, opp.species, opp_idx);
+            cpp_release_inflicted_traps(s, opp_idx, opp_active_idx);
+        }
     }
 
     if (p.item == I_FLAME_ORB && p.status == STATUS_NONE) {
@@ -357,7 +362,7 @@ bool band_late_damage(BattleState& s, int si, int active_idx, int opp_idx, const
 
     if (p.item == I_STICKY_BARB && p.ability != AB_MAGIC_GUARD) {
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 8));
-        if (p.hp == 0) { p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
+        if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
     }
     if (has_ve(p, VE_OCTOLOCK)) {
         change_stat_stage(s, si, 1, -1, false, false, false);
@@ -365,7 +370,7 @@ bool band_late_damage(BattleState& s, int si, int active_idx, int opp_idx, const
     }
     if (has_ve(p, VE_NIGHTMARE) && p.status == STATUS_SLEEP && p.ability != AB_MAGIC_GUARD) {
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 4));
-        if (p.hp == 0) { p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
+        if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
     }
     if (has_ve(p, VE_NIGHTMARE) && p.status != STATUS_SLEEP) {
         std::vector<TimedVolatile> kept;
@@ -374,7 +379,7 @@ bool band_late_damage(BattleState& s, int si, int active_idx, int opp_idx, const
     }
     if ((p.volatiles & VOL_CURSED) && p.ability != AB_MAGIC_GUARD) {
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 4));
-        if (p.hp == 0) { p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
+        if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
     }
 
     int32_t bound_turns;
@@ -398,7 +403,7 @@ bool band_late_damage(BattleState& s, int si, int active_idx, int opp_idx, const
         int32_t bound_dmg = (opp_active->item == I_BINDING_BAND)
             ? std::max(1, p.max_hp / 6) : std::max(1, p.max_hp / 8);
         p.hp = std::max(0, p.hp - bound_dmg);
-        if (p.hp == 0) { p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
+        if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
     }
 
     check_berry(s, si, opp_idx, luck_for(L, si).rng, luck_for(L, si).overrides);
@@ -450,7 +455,12 @@ bool res_tick_timed_volatiles(BattleState& s, int si, int active_idx) {
                 }
             }
         } else if (effect == VE_DROWSY) {
-            if (can_apply_status(p, STATUS_SLEEP, MOVE_NONE, AB_NONE, s)) p.status = STATUS_SLEEP;
+            if (can_apply_status(p, STATUS_SLEEP, MOVE_NONE, AB_NONE, s)) {
+                p.status = STATUS_SLEEP;
+                // Yawn/Drowsy applies sleep inline; STATUS_APPLY emitted directly
+                // (Python residuals.py:584). Consumer reads side/target/status only.
+                rich_log_status_apply(s.turn_number, p.species, STATUS_SLEEP, si, SourceTag::MOVE);
+            }
         }
         // DISABLE/THROAT_CHOPPED/LASER_FOCUS/SEMI_INVULNERABLE: just expire (no-op)
     }
@@ -465,7 +475,7 @@ bool res_tick_timed_volatiles(BattleState& s, int si, int active_idx) {
         new_timed = filtered;
     }
     p.timed_volatiles.assign_from(new_timed);
-    if (perish_faint) { p.fainted = true; p.hp = 0; cpp_release_inflicted_traps(s, si, active_idx); return true; }
+    if (perish_faint) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; p.hp = 0; cpp_release_inflicted_traps(s, si, active_idx); return true; }
     return false;
 }
 

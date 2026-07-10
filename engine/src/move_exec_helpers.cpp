@@ -8,6 +8,7 @@
 #include "damage.h"                // cpp_effective_stat (Shell Side Arm physical/special split)
 #include "species_exp_lookup.h"    // base stats for Beast Boost raw-stat comparison
 #include "stats.h"                 // compute_stat for Beast Boost raw stats
+#include "event_log.h"             // rich_log_faint (damage-caused KO observation)
 
 #include <algorithm>
 #include <stdexcept>
@@ -134,6 +135,11 @@ int32_t cpp_apply_damage(BattleState& state, int defender_idx, int32_t damage,
         // _apply_damage, strip traps it was inflicting from active opponents immediately.
         int32_t fainted_team_idx = side_at(state, defender_idx).active_indices[defender_slot];
         cpp_release_inflicted_traps(state, defender_idx, fainted_team_idx);
+        // FAINT emit: cpp_apply_damage faints inline (not via cpp_faint_active), so this is
+        // the observation point for every damage-caused KO (Python emits it at the call site
+        // after faint_active, e.g. core.py:1078/2427). Skeleton ignores DAMAGE/HITCOUNT, so
+        // firing here vs. after HITCOUNT keeps the MOVE_USE/FAINT order identical.
+        rich_log_faint(state.turn_number, defender.species, defender_idx);
     }
 
     if (!fainted) {

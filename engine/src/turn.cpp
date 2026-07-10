@@ -11,6 +11,7 @@
 #include "residuals.h"          // cpp_apply_residuals
 #include "core_leaf.h"          // cpp_build_pending_entries, cpp_select_next_action, ActionC
 #include "forced_trace.h"       // ForcedAnswer, ForcedTrace (Cat-A forced consumption)
+#include "event_log.h"          // rich_log_presence (CANT_FLINCH)
 #include <algorithm>
 #include <random>
 #include <stdexcept>
@@ -476,6 +477,7 @@ void cpp_run_one_turn(BattleState& state,
 
         if (active.volatiles & V_FLINCHED) {
             active.volatiles &= ~V_FLINCHED;
+            rich_log_presence(state.turn_number, RICH_EV_CANT_FLINCH, active.species);
             continue;  // flinched mons do not act, not recorded in turn_order
         }
 

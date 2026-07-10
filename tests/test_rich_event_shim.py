@@ -78,9 +78,8 @@ def test_unmapped_event_fails_loud():
     log = cpp.RichEventLog()
     cpp.set_rich_event_log(log)
     try:
-        # DAMAGE (45) is not in the E1a dispatch table.
-        # Reuse charge_turn plumbing is impossible, so emit a mapped event and then
-        # assert an unmapped LogEvent raises via the internal helper.
+        # Emit any mapped event, then assert an unmapped LogEvent raises via the
+        # internal helper. TURN_START (1) is not in the rich dispatch table.
         cpp.rich_log_charge_turn(1, Species.PIKACHU.value, Move.FLY.value)
     finally:
         cpp.set_rich_event_log(None)
@@ -88,7 +87,80 @@ def test_unmapped_event_fails_loud():
     from liveplay.logger import _rich_kwargs
     entry = log[0]
     with pytest.raises(ValueError):
-        _rich_kwargs(LogEvent.DAMAGE, entry)
+        _rich_kwargs(LogEvent.TURN_START, entry)
+
+
+# --- E1b consumed-event round-trip coverage. Emit each E1b event through the bound
+# native helpers (single source of truth), then assert from_cpp rebuilds the kwargs
+# with Species/Move/Status enums and tag strings. ---
+
+# SourceTag ints mirror event_log.h: NONE=0, MOVE=1, BERRY=2, ...
+_TAG_MOVE = 1
+_TAG_BERRY = 2
+# VolatileTag: NONE=0, CONFUSED=1, ...
+_VOL_CONFUSED = 1
+
+
+def _build_e1b_log():
+    cpp = nuzlocke_engine_cpp
+    from liveplay.data.status import Status
+    log = cpp.RichEventLog()
+    cpp.set_rich_event_log(log)
+    try:
+        cpp.rich_log_move_use(1, Species.PIKACHU.value, Move.THUNDERBOLT.value, 0)
+        cpp.rich_log_presence(1, LogEvent.CANT_PARALYSIS.value, Species.PIKACHU.value)
+        cpp.rich_log_hit_self_confusion(1, Species.PIKACHU.value, 12, 0)
+        cpp.rich_log_status_apply(1, Species.CHARIZARD.value, Status.PARALYSIS.value, 1, _TAG_MOVE)
+        cpp.rich_log_stat_boost(1, Species.CHARIZARD.value, 1, -1, 1, _TAG_MOVE)
+        cpp.rich_log_volatile_apply(1, Species.CHARIZARD.value, _VOL_CONFUSED, 1, 0)
+        cpp.rich_log_hitcount(1, Species.PIKACHU.value, 0)
+        cpp.rich_log_damage(1, Species.CHARIZARD.value, 40, 60, 0, 0, 1, 0)
+        cpp.rich_log_heal(1, Species.PIKACHU.value, 20, 80, 0, _TAG_BERRY)
+        cpp.rich_log_faint(1, Species.CHARIZARD.value, 1)
+        cpp.rich_log_exp_gain(1, Species.PIKACHU.value, 340)
+        cpp.rich_log_level_up(1, Species.PIKACHU.value, 22)
+    finally:
+        cpp.set_rich_event_log(None)
+    return log
+
+
+def test_e1b_events_round_trip():
+    from liveplay.data.status import Status
+    cap = CapturingLogger.from_cpp(_build_e1b_log())
+    ev = dict(cap.events)  # LogEvent -> kwargs (each fired once here)
+
+    assert ev[LogEvent.MOVE_USE] == {
+        "user": Species.PIKACHU, "move": Move.THUNDERBOLT, "side": 0}
+    assert ev[LogEvent.CANT_PARALYSIS] == {"pokemon": Species.PIKACHU}
+    assert ev[LogEvent.HIT_SELF_CONFUSION] == {
+        "pokemon": Species.PIKACHU, "damage": 12, "side": 0}
+    assert ev[LogEvent.STATUS_APPLY] == {
+        "target": Species.CHARIZARD, "status": Status.PARALYSIS, "side": 1, "source": "move"}
+    assert ev[LogEvent.STAT_BOOST] == {
+        "target": Species.CHARIZARD, "stat": 1, "stages": -1, "side": 1, "source": "move"}
+    assert ev[LogEvent.VOLATILE_APPLY] == {
+        "target": Species.CHARIZARD, "side": 1, "volatile": "confused"}
+    assert ev[LogEvent.HITCOUNT] == {"user": Species.PIKACHU, "side": 0}
+    assert ev[LogEvent.DAMAGE] == {
+        "target": Species.CHARIZARD, "amount": 40, "hp_after": 60,
+        "attacker_side": 0, "attacker_slot": 0, "defender_side": 1}
+    assert ev[LogEvent.HEAL] == {
+        "target": Species.PIKACHU, "amount": 20, "side": 0, "source": "berry", "hp_after": 80}
+    assert ev[LogEvent.FAINT] == {"pokemon": Species.CHARIZARD, "side": 1}
+    assert ev[LogEvent.EXP_GAIN] == {"pokemon": Species.PIKACHU, "amount": 340}
+    assert ev[LogEvent.LEVEL_UP] == {"pokemon": Species.PIKACHU, "new_level": 22}
+
+
+def test_e1b_enum_types_reconstructed():
+    """Species/Move/Status must come back as enum objects, not raw ints (the reconciler
+    compares with == against enums)."""
+    cap = CapturingLogger.from_cpp(_build_e1b_log())
+    move_use = cap.first(LogEvent.MOVE_USE)
+    assert isinstance(move_use["user"], Species)
+    assert isinstance(move_use["move"], Move)
+    status = cap.first(LogEvent.STATUS_APPLY)
+    from liveplay.data.status import Status
+    assert isinstance(status["status"], Status)
 
 
 def test_unknown_tag_fails_loud():

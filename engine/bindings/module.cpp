@@ -657,6 +657,9 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
         .def_readonly("defender_side", &RichEventEntry::defender_side)
         .def_readonly("status", &RichEventEntry::status)
         .def_readonly("new_level", &RichEventEntry::new_level)
+        .def_readonly("move", &RichEventEntry::move)
+        .def_readonly("stat", &RichEventEntry::stat)
+        .def_readonly("hp_after", &RichEventEntry::hp_after)
         .def_readonly("aux0", &RichEventEntry::aux0)
         .def_readonly("aux1", &RichEventEntry::aux1)
         .def_readonly("source_tag", &RichEventEntry::source_tag)
@@ -696,4 +699,53 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
     m.def("rich_log_stat_copy", &rich_log_stat_copy,
           py::arg("turn"), py::arg("side"), py::arg("copier_species"),
           py::arg("source_species"));
+
+    // E1b consumed-event emit helpers. Tag params are taken as ints and cast to the
+    // SourceTag/VolatileTag enums so the Python shim/tests use the same single source
+    // of truth for the entry layout.
+    m.def("rich_log_move_use", &rich_log_move_use,
+          py::arg("turn"), py::arg("species"), py::arg("move"), py::arg("side"));
+    m.def("rich_log_presence", &rich_log_presence,
+          py::arg("turn"), py::arg("event"), py::arg("species"));
+    m.def("rich_log_cant_sleep", &rich_log_cant_sleep,
+          py::arg("turn"), py::arg("species"), py::arg("turns"));
+    m.def("rich_log_hit_self_confusion", &rich_log_hit_self_confusion,
+          py::arg("turn"), py::arg("species"), py::arg("damage"), py::arg("side"));
+    m.def("rich_log_status_apply",
+          [](int turn, int32_t species, int32_t status, int32_t side, int32_t source) {
+              rich_log_status_apply(turn, species, status, side, static_cast<SourceTag>(source));
+          }, py::arg("turn"), py::arg("species"), py::arg("status"), py::arg("side"),
+             py::arg("source"));
+    m.def("rich_log_stat_boost",
+          [](int turn, int32_t species, int32_t stat, int32_t stages, int32_t side, int32_t source) {
+              rich_log_stat_boost(turn, species, stat, stages, side, static_cast<SourceTag>(source));
+          }, py::arg("turn"), py::arg("species"), py::arg("stat"), py::arg("stages"),
+             py::arg("side"), py::arg("source"));
+    m.def("rich_log_volatile_apply",
+          [](int turn, int32_t species, int32_t vol, int32_t side, int32_t source) {
+              rich_log_volatile_apply(turn, species, static_cast<VolatileTag>(vol), side,
+                                      static_cast<SourceTag>(source));
+          }, py::arg("turn"), py::arg("species"), py::arg("volatile_tag"), py::arg("side"),
+             py::arg("source"));
+    m.def("rich_log_hitcount", &rich_log_hitcount,
+          py::arg("turn"), py::arg("species"), py::arg("side"));
+    m.def("rich_log_damage",
+          [](int turn, int32_t species, int32_t amount, int32_t hp_after, int32_t attacker_side,
+             int32_t attacker_slot, int32_t defender_side, int32_t source) {
+              rich_log_damage(turn, species, amount, hp_after, attacker_side, attacker_slot,
+                              defender_side, static_cast<SourceTag>(source));
+          }, py::arg("turn"), py::arg("species"), py::arg("amount"), py::arg("hp_after"),
+             py::arg("attacker_side"), py::arg("attacker_slot"), py::arg("defender_side"),
+             py::arg("source"));
+    m.def("rich_log_heal",
+          [](int turn, int32_t species, int32_t amount, int32_t hp_after, int32_t side, int32_t source) {
+              rich_log_heal(turn, species, amount, hp_after, side, static_cast<SourceTag>(source));
+          }, py::arg("turn"), py::arg("species"), py::arg("amount"), py::arg("hp_after"),
+             py::arg("side"), py::arg("source"));
+    m.def("rich_log_faint", &rich_log_faint,
+          py::arg("turn"), py::arg("species"), py::arg("side"));
+    m.def("rich_log_exp_gain", &rich_log_exp_gain,
+          py::arg("turn"), py::arg("species"), py::arg("amount"));
+    m.def("rich_log_level_up", &rich_log_level_up,
+          py::arg("turn"), py::arg("species"), py::arg("new_level"));
 }

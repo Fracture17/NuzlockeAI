@@ -688,6 +688,10 @@ bool pdg_accuracy_and_miss(BattleState& state, int side_idx, int defender_idx, i
                              luck_atk.random_mode, luck_atk.rng, &catb_ctx))
         return false;
 
+    // MOVE_MISS: emitted at the accuracy-fail branch before miss consequences
+    // (Python core.py:1751). Consumer keys presence on a move-missed message.
+    rich_log_presence(state.turn_number, RICH_EV_MOVE_MISS, active_mon(state, side_idx).species);
+
     // Miss consequences.
     active_mon(state, side_idx).last_move_failed = true;
 
@@ -763,9 +767,12 @@ bool pdg_priority_and_protection_guards(BattleState& state, int side_idx, int de
                 if (tv.effect == VE_CHARGING_MOVE) { charging_move = tv.turns; break; }
             }
             if (!semi_invuln_hits_through(charging_move, move)) {
+                // Semi-invuln miss for damaging moves (Python core.py:2149).
+                rich_log_presence(state.turn_number, RICH_EV_MOVE_MISS, active_mon(state, side_idx).species);
                 active_mon(state, side_idx).last_move_failed = true;
                 return true;
             }
+
         }
     }
 

@@ -7,6 +7,7 @@
 #include "damage.h"              // cpp_effective_stat
 #include "effects_internal.h"    // active_mon
 #include "forced_trace.h"
+#include "event_log.h"           // rich_log_cant_*/hit_self_confusion
 
 #include <cmath>
 #include <stdexcept>
@@ -111,8 +112,10 @@ bool cpp_pre_move_checks(BattleState& state, int side_idx, const PreMoveLuck& lu
         }
 
         if (!resolve_fire_high(wake_chance, luck.wake_threshold, luck.random_mode, luck.rng,
-                               RngEventC::WAKE))
+                               RngEventC::WAKE)) {
+            rich_log_cant_sleep(state.turn_number, attacker.species, attacker.sleep_turns);
             return false;
+        }
         attacker.status = STATUS_NONE;
         attacker.sleep_turns = 0;
         attacker.is_rest_sleep = false;
@@ -126,6 +129,7 @@ bool cpp_pre_move_checks(BattleState& state, int side_idx, const PreMoveLuck& lu
             attacker.status = STATUS_NONE;
         } else if (!resolve_fire_high(20.0, luck.defrost_threshold, luck.random_mode, luck.rng,
                                       RngEventC::DEFROST)) {
+            rich_log_presence(state.turn_number, RICH_EV_CANT_FROZEN, attacker.species);
             return false;
         } else {
             attacker.status = STATUS_NONE;
@@ -135,8 +139,10 @@ bool cpp_pre_move_checks(BattleState& state, int side_idx, const PreMoveLuck& lu
     if (attacker.status == STATUS_PARALYSIS) {
         // rng.py:508 _roll_bernoulli(FULL_PARALYSIS, chance); stored bool = inner Bernoulli
         if (!resolve_can_act(25.0, luck.paralysis_threshold, luck.random_mode, luck.rng,
-                             RngEventC::FULL_PARALYSIS))
+                             RngEventC::FULL_PARALYSIS)) {
+            rich_log_presence(state.turn_number, RICH_EV_CANT_PARALYSIS, attacker.species);
             return false;
+        }
     }
 
     // Confusion: increment counter, check snap, then possibly self-hit.
@@ -176,6 +182,7 @@ bool cpp_pre_move_checks(BattleState& state, int side_idx, const PreMoveLuck& lu
                 roll = luck.damage_roll;
             }
             dmg = dmg * (85 + (int32_t)(roll * 15)) / 100;
+            rich_log_hit_self_confusion(state.turn_number, self.species, dmg, side_idx);
             MoveExecLuck self_luck;
             self_luck.proc_threshold = luck.proc_threshold;
             self_luck.random_mode = luck.random_mode;
@@ -191,8 +198,10 @@ bool cpp_pre_move_checks(BattleState& state, int side_idx, const PreMoveLuck& lu
     PokemonState& after = active_mon(state, side_idx);
     if (after.volatiles & VOLATILE_ATTRACTED) {
         if (!resolve_can_act(50.0, luck.attract_threshold, luck.random_mode, luck.rng,
-                             RngEventC::ATTRACT_IMMOBILIZE))
+                             RngEventC::ATTRACT_IMMOBILIZE)) {
+            rich_log_presence(state.turn_number, RICH_EV_CANT_INFATUATION, after.species);
             return false;
+        }
     }
 
     return true;

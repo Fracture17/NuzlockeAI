@@ -381,6 +381,8 @@ void handle_status_action(BattleState& state, int side_idx, int defender_idx, in
         state.turn_number};
     if (!rng_resolve_accuracy(eff_acc, eff_is_none, luck_atk.accuracy_threshold,
                               luck_atk.random_mode, luck_atk.rng, &catb_ctx)) {
+        // Status-move accuracy miss (Python core.py:1751).
+        rich_log_presence(state.turn_number, RICH_EV_MOVE_MISS, active_mon(state, side_idx).species);
         active_mon(state, side_idx).last_move_failed = true;
         return;
     }
@@ -389,6 +391,8 @@ void handle_status_action(BattleState& state, int side_idx, int defender_idx, in
         PokemonState& def_si = active_mon(state, defender_idx);
         if (has_timed_ve(def_si, VE_SEMI_INVULNERABLE)
                 && !either_no_guard(active_mon(state, side_idx), def_si)) {
+            // Status-move semi-invuln miss (Python core.py:1762).
+            rich_log_presence(state.turn_number, RICH_EV_MOVE_MISS, active_mon(state, side_idx).species);
             active_mon(state, side_idx).last_move_failed = true;
             return;
         }
@@ -437,6 +441,8 @@ void handle_status_action(BattleState& state, int side_idx, int defender_idx, in
         if (def.ability == AB_MAGIC_BOUNCE) {
             if (has_timed_ve(def, VE_SEMI_INVULNERABLE)
                     && !either_no_guard(active_mon(state, side_idx), def)) {
+                rich_log_presence(state.turn_number, RICH_EV_MOVE_MISS,
+                                  active_mon(state, side_idx).species);
                 active_mon(state, side_idx).last_move_failed = true;
                 return;
             }
@@ -653,6 +659,8 @@ void execute_action_body(BattleState& state, int side_idx, const ExecAction& act
         if (!failed.has_acted) failed.has_acted = true;
         return;
     }
+
+    rich_log_move_use(state.turn_number, active_mon(state, side_idx).species, move, side_idx);
 
     // Clear protect_counter / PROTECT_USED for a non-protect-family move.
     // Python uses a stale `attacker` snapshot (captured before _pre_move_checks) as the base

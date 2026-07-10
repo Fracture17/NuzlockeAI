@@ -160,7 +160,12 @@ static void on_berry_consumed(BattleState& s, int side_idx) {
     PokemonState& mon = active_mon(s, side_idx);
     if (mon.ability == AB_CHEEK_POUCH) {
         int32_t extra = std::max<int32_t>(1, mon.max_hp / 3);
+        int32_t hp_before = mon.hp;
         mon.hp = std::min<int32_t>(mon.max_hp, mon.hp + extra);
+        // HEAL source=cheek_pouch: consumer counts per-side occurrences (Python
+        // _helpers.py:679). Emit unconditionally to mirror Python (fires even at full HP).
+        rich_log_heal(s.turn_number, mon.species, mon.hp - hp_before, mon.hp, side_idx,
+                      SourceTag::CHEEK_POUCH);
     }
     apply_unburden(s, side_idx);
 }
@@ -213,6 +218,13 @@ static void check_white_herb(BattleState& s, int side_idx) {
     bool any_neg = false;
     for (int i = 0; i < 7; ++i) if (get_stage(mon, i) < 0) { any_neg = true; break; }
     if (!any_neg) return;
+    // Per-stat STAT_BOOST for each restored negative stage (Python _helpers.py:515):
+    // stages = -old_stage (positive restore). Emit before zeroing to read old_stage.
+    for (int i = 0; i < 7; ++i) {
+        int32_t old_stage = get_stage(mon, i);
+        if (old_stage < 0)
+            rich_log_stat_boost(s.turn_number, mon.species, i, -old_stage, side_idx, SourceTag::ITEM);
+    }
     for (int i = 0; i < 7; ++i) if (get_stage(mon, i) < 0) set_stage(mon, i, 0);
     mon.item = ITEM_NONE;
     apply_unburden(s, side_idx);
@@ -242,6 +254,10 @@ int32_t change_stat_stage(BattleState& s, int side_idx, int stat_idx, int delta,
     int32_t new_stage = std::max(-6, std::min(6, old_stage + delta));
     int32_t actual = new_stage - old_stage;
     set_stage(mon, stat_idx, new_stage);
+    // STAT_BOOST fires only on a real change (Python _helpers.py:581). Consumer reads
+    // side/target/direction only; source is unread, so the broad MOVE tag suffices.
+    if (actual != 0)
+        rich_log_stat_boost(s.turn_number, mon.species, stat_idx, actual, side_idx, SourceTag::MOVE);
     if (actual < 0) mon.had_stat_lowered_this_turn = true;
     else if (actual > 0) mon.had_stat_raised_this_turn = true;
     if (actual < 0) check_white_herb(s, side_idx);
@@ -339,6 +355,9 @@ void apply_status_to(BattleState& s, int side_idx, int32_t status) {
     int32_t toxic_turns = (status == STATUS_TOXIC) ? 1 : mon.toxic_turns;
     mon.status = status;
     mon.toxic_turns = toxic_turns;
+    // Python _helpers.py:499 always tags STATUS_APPLY source="move"; consumer reads
+    // side/target/status only.
+    rich_log_status_apply(s.turn_number, mon.species, status, side_idx, SourceTag::MOVE);
 }
 
 // BERRY_ITEMS membership (src/data/items.py). Sorted; binary search.
@@ -435,9 +454,14 @@ bool check_berry(BattleState& s, int side_idx, int opp_side_idx, NativeRng* rng,
             if (ripen && berry != ITEM_BERRY_JUICE) heal = (int32_t)((long long)mon.max_hp * 2 / frac_denom);
             else heal = mon.max_hp / frac_denom;
         }
+        int32_t hp_before = mon.hp;
         mon.hp = std::min(mon.max_hp, mon.hp + heal);
         mon.item = ITEM_NONE;
         mon.consumed_berry = berry;
+        // HEAL source=berry: the reconciler matches these one-for-one per side against
+        // observed restore messages (Python _helpers.py:726).
+        rich_log_heal(s.turn_number, mon.species, mon.hp - hp_before, mon.hp, side_idx,
+                      SourceTag::BERRY);
         if (eff.confused_stat != -1) {
             PokemonState& m2 = active_mon(s, side_idx);
             if (nature_lowered_stat(m2.nature) == eff.confused_stat)
@@ -594,6 +618,9 @@ void cpp_faint_active(BattleState& s, int side_idx, bool notify_soul_heart, int 
     if (mon.fainted) return;
     mon.hp = 0;
     mon.fainted = true;
+    // Single-fire FAINT chokepoint (the idempotent guard above ensures one emit per KO).
+    // Consumer reads side+species for identity/ordering; cause is unread.
+    rich_log_faint(s.turn_number, mon.species, side_idx);
     cpp_release_inflicted_traps(s, side_idx, team_idx);
     if (notify_soul_heart) notify_faint_soul_heart(s);
 }
@@ -946,19 +973,28 @@ static bool apply_volatile_move(BattleState& s, int side_idx, int32_t move, int 
     if (move == MOVE_CONFUSE_RAY || move == MOVE_SUPERSONIC || move == MOVE_SWEET_KISS) {
         if (side_has_safeguard(side_at(s, opp)) && attacker.ability != AB_INFILTRATOR) return true;
         PokemonState& def = active_mon(s, opp);
-        if (can_confuse(def, s)) def.volatiles |= VOLATILE_CONFUSED;
+        if (can_confuse(def, s)) {
+            def.volatiles |= VOLATILE_CONFUSED;
+            rich_log_volatile_apply(s.turn_number, def.species, VolatileTag::CONFUSED, opp, SourceTag::MOVE);
+        }
         return true;
     }
     if (move == MOVE_FLATTER) {
         change_stat_stage(s, opp, 2, +1, false, false, false);
         PokemonState& def = active_mon(s, opp);
-        if (can_confuse(def, s)) def.volatiles |= VOLATILE_CONFUSED;
+        if (can_confuse(def, s)) {
+            def.volatiles |= VOLATILE_CONFUSED;
+            rich_log_volatile_apply(s.turn_number, def.species, VolatileTag::CONFUSED, opp, SourceTag::MOVE);
+        }
         return true;
     }
     if (move == MOVE_SWAGGER) {
         change_stat_stage(s, opp, 0, +2, false, false, false);
         PokemonState& def = active_mon(s, opp);
-        if (can_confuse(def, s)) def.volatiles |= VOLATILE_CONFUSED;
+        if (can_confuse(def, s)) {
+            def.volatiles |= VOLATILE_CONFUSED;
+            rich_log_volatile_apply(s.turn_number, def.species, VolatileTag::CONFUSED, opp, SourceTag::MOVE);
+        }
         return true;
     }
     if (move == MOVE_ATTRACT) {
@@ -1531,6 +1567,9 @@ static void apply_interaction_move(BattleState& s, int side_idx, int32_t move,
             m.hp = m.max_hp;
             m.status = STATUS_SLEEP;
             m.is_rest_sleep = true;
+            // Rest applies sleep inline (not via apply_status_to), so it emits STATUS_APPLY
+            // directly (Python effects.py:1265).
+            rich_log_status_apply(s.turn_number, m.species, STATUS_SLEEP, side_idx, SourceTag::MOVE);
         } else {
             apply_status_to(s, target_idx, si.status);
             if (si.status == STATUS_TOXIC) active_mon(s, target_idx).toxic_turns = 1;

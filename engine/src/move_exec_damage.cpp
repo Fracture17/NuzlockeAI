@@ -15,6 +15,7 @@
 #include "type_chart_lookup.h"   // cpp_type_effectiveness
 #include "core_leaf.h"           // cpp_compute_variable_bp
 #include "../generated/move_data.h"
+#include "event_log.h"           // rich_log_damage/crit/hitcount (per-hit observation)
 
 #include <algorithm>
 #include <cmath>
@@ -570,11 +571,23 @@ LoopResult handle_damage_loop(BattleState& state, int side_idx, int defender_idx
 
         int32_t hp_before = active_mon(state, defender_idx).hp;
         int32_t attacker_ability = active_mon(state, side_idx).ability;
+        // Snapshot pre-damage identity for the DAMAGE emit (species/attacker slot fixed
+        // for the hit; cpp_apply_damage may KO or mutate the defender in place).
+        int32_t damage_target_species = active_mon(state, defender_idx).species;
+        int32_t attacker_slot0 = side_at(state, side_idx).active_indices[0];
         MoveExecLuck mel = make_exec_luck(luck_def.proc_threshold, luck_def.random_mode, luck_def.rng, luck_def.overrides);
         int32_t hp_removed = cpp_apply_damage(state, defender_idx, damage, attacker_ability, mel,
                                               md.category, side_idx, 0);
         total_damage += damage;
         actual_damage += std::max(0, hp_removed);
+
+        // DAMAGE + CRIT per hit (Python core.py:1376-1378). amount is the computed damage
+        // (not clamped hp_removed); hp_after from the post-apply defender. source=move.
+        rich_log_damage(state.turn_number, damage_target_species, damage,
+                        active_mon(state, defender_idx).hp, side_idx, attacker_slot0,
+                        defender_idx, SourceTag::MOVE);
+        if (hit_is_crit)
+            rich_log_presence(state.turn_number, RICH_EV_CRIT, damage_target_species);
 
         // Capture updated_defender snapshot fields for faint effects (before recoil overwrites).
         int32_t updated_def_volatiles = active_mon(state, defender_idx).volatiles;
@@ -631,7 +644,9 @@ LoopResult handle_damage_loop(BattleState& state, int side_idx, int defender_idx
             cpp_apply_rocky_helmet(state, side_idx, defender_idx, move, rh_luck);
         }
 
-        // HITCOUNT log omitted.
+        // HITCOUNT once per hit (Python core.py:1447): user=attacker, side=attacker side.
+        // The reconciler counts these per attacker side to match HITXTIMES.
+        rich_log_hitcount(state.turn_number, active_mon(state, side_idx).species, side_idx);
 
         if (updated_def_fainted) {
             apply_defender_faint_effects(state, side_idx, defender_idx, move, md,

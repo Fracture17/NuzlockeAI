@@ -314,14 +314,144 @@ def _kw_stat_copy(entry) -> dict:
             "source_species": Species(entry.aux0)}
 
 
-# Dispatch: LogEvent -> function(entry) -> kwargs dict. E1b extends this cleanly.
-# E1a covers only the five "silent" events.
+# --- E1b consumed-event kwargs builders. Reconstruct Species/Status enums and tag
+# strings; drop RICH_UNSET fields. The reconciler (check_log_events) compares these
+# with == against enum objects, so enums (not raw ints) are mandatory. ---
+
+def _kw_move_use(entry) -> dict:
+    from liveplay.data.species import Species
+    from liveplay.data.moves import Move
+    return {"user": Species(entry.species), "move": Move(entry.move), "side": entry.side}
+
+
+def _kw_crit(entry) -> dict:
+    from liveplay.data.species import Species
+    return {"target": Species(entry.species)}
+
+
+def _kw_pokemon(entry) -> dict:
+    """CANT_* presence events: single 'pokemon' species kwarg."""
+    from liveplay.data.species import Species
+    return {"pokemon": Species(entry.species)}
+
+
+def _kw_hit_self_confusion(entry) -> dict:
+    from liveplay.data.species import Species
+    return {"pokemon": Species(entry.species), "damage": entry.amount, "side": entry.side}
+
+
+def _kw_move_miss(entry) -> dict:
+    from liveplay.data.species import Species
+    return {"user": Species(entry.species)}
+
+
+def _kw_status_apply(entry) -> dict:
+    from liveplay.data.species import Species
+    from liveplay.data.status import Status
+    kw = {"target": Species(entry.species), "status": Status(entry.status), "side": entry.side}
+    source = _source_tag_str(entry.source_tag)
+    if source is not None:
+        kw["source"] = source
+    return kw
+
+
+def _kw_stat_boost(entry) -> dict:
+    from liveplay.data.species import Species
+    kw = {"target": Species(entry.species), "stat": entry.stat,
+          "stages": entry.stages, "side": entry.side}
+    source = _source_tag_str(entry.source_tag)
+    if source is not None:
+        kw["source"] = source
+    return kw
+
+
+def _kw_volatile_apply(entry) -> dict:
+    from liveplay.data.species import Species
+    kw = {"target": Species(entry.species), "side": entry.side}
+    vol = _volatile_tag_str(entry.volatile_tag)
+    if vol is not None:
+        kw["volatile"] = vol
+    source = _source_tag_str(entry.source_tag)
+    if source is not None:
+        kw["source"] = source
+    return kw
+
+
+def _kw_hitcount(entry) -> dict:
+    from liveplay.data.species import Species
+    return {"user": Species(entry.species), "side": entry.side}
+
+
+def _kw_damage(entry) -> dict:
+    from liveplay.data.species import Species
+    kw = {"target": Species(entry.species), "amount": entry.amount}
+    source = _source_tag_str(entry.source_tag)
+    if source is not None:
+        kw["source"] = source
+    if _present(entry.hp_after):
+        kw["hp_after"] = entry.hp_after
+    if _present(entry.attacker_side):
+        kw["attacker_side"] = entry.attacker_side
+    if _present(entry.attacker_slot):
+        kw["attacker_slot"] = entry.attacker_slot
+    if _present(entry.defender_side):
+        kw["defender_side"] = entry.defender_side
+    return kw
+
+
+def _kw_heal(entry) -> dict:
+    from liveplay.data.species import Species
+    kw = {"target": Species(entry.species), "amount": entry.amount, "side": entry.side}
+    source = _source_tag_str(entry.source_tag)
+    if source is not None:
+        kw["source"] = source
+    if _present(entry.hp_after):
+        kw["hp_after"] = entry.hp_after
+    return kw
+
+
+def _kw_faint(entry) -> dict:
+    from liveplay.data.species import Species
+    return {"pokemon": Species(entry.species), "side": entry.side}
+
+
+def _kw_exp_gain(entry) -> dict:
+    from liveplay.data.species import Species
+    return {"pokemon": Species(entry.species), "amount": entry.amount}
+
+
+def _kw_level_up(entry) -> dict:
+    from liveplay.data.species import Species
+    return {"pokemon": Species(entry.species), "new_level": entry.new_level}
+
+
+# Dispatch: LogEvent -> function(entry) -> kwargs dict.
 _RICH_EVENT_KWARGS = {
+    # E1a silent events.
     LogEvent.CHARGE_TURN: _kw_charge,
     LogEvent.SEMI_INVULNERABLE_ENTER: _kw_charge,
     LogEvent.SEMI_INVULNERABLE_EXIT: _kw_charge,
     LogEvent.BATON_PASS_TRANSFER: _kw_baton_pass,
     LogEvent.STAT_COPY: _kw_stat_copy,
+    # E1b consumed events.
+    LogEvent.MOVE_USE: _kw_move_use,
+    LogEvent.CRIT: _kw_crit,
+    LogEvent.CANT_FLINCH: _kw_pokemon,
+    LogEvent.CANT_PARALYSIS: _kw_pokemon,
+    LogEvent.CANT_SLEEP: _kw_pokemon,
+    LogEvent.CANT_FROZEN: _kw_pokemon,
+    LogEvent.CANT_INFATUATION: _kw_pokemon,
+    LogEvent.HIT_SELF_CONFUSION: _kw_hit_self_confusion,
+    LogEvent.MOVE_MISS: _kw_move_miss,
+    LogEvent.STATUS_APPLY: _kw_status_apply,
+    LogEvent.STAT_BOOST: _kw_stat_boost,
+    LogEvent.VOLATILE_APPLY: _kw_volatile_apply,
+    LogEvent.HITCOUNT: _kw_hitcount,
+    LogEvent.DAMAGE: _kw_damage,
+    LogEvent.HEAL: _kw_heal,
+    LogEvent.FAINT: _kw_faint,
+    LogEvent.EXP_GAIN: _kw_exp_gain,
+    LogEvent.LEVEL_UP: _kw_level_up,
 }
 
 

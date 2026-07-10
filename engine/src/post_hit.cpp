@@ -12,6 +12,7 @@
 #include "stats.h"                 // compute_stat for _apply_form_change
 #include "move_exec_guards.h"      // ExecCtx (for ctx->overrides in contact effects)
 #include "oracle.h"                // oracle_resolve, RngEventC, NeedsRNG
+#include "event_log.h"             // rich_log_volatile_apply (secondary confusion)
 #include "forced_trace.h"
 #include "rng_resolver.h"          // RngLogCtx for participant plumbing
 
@@ -512,8 +513,10 @@ void sec_standard_secondary(BattleState& s, const PostHitArgs& a, bool mold_brea
     if (sec.volatile_confused == 1 && !sd) {
         PokemonState& defender = active_mon(s, di);
         if (!(defender.volatiles & V_CONFUSED) && defender.ability != A_OWN_TEMPO
-            && !(s.terrain == TERRAIN_MISTY && is_grounded(defender, s)))
+            && !(s.terrain == TERRAIN_MISTY && is_grounded(defender, s))) {
             defender.volatiles |= V_CONFUSED;
+            rich_log_volatile_apply(s.turn_number, defender.species, VolatileTag::CONFUSED, di, SourceTag::MOVE);
+        }
     }
 }
 
