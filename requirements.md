@@ -2195,3 +2195,24 @@ file = "engine/"
 confidence = "settled"
 rationale = "-ffp-contract=off stays: traces record Python IEEE doubles w/o FMA; contraction fuses a*b+c in the damage chain -> off-by-1 -> trace divergence. Also needed for reproducible solver bucket replays. Perf cost negligible (integer-heavy engine)."
 updated = "2026-07-10T02:05:56.617Z"
+
+[[record]]
+name = "rich_event_log_pod_tags"
+file = "engine/src/event_log.h"
+confidence = "requirement"
+rationale = "E1 rich LogEvent logger (separate from D3 RNG logger). Tagged-POD RichEventEntry vector OUTSIDE BattleState; string kwargs are int tags expanded only in the Python shim (from_cpp). Emits nullptr-guarded pure observation: no RNG/behavior change."
+updated = "2026-07-10T17:41:38.056Z"
+
+[[record]]
+name = "rich_event_charge_split"
+file = "engine/src/event_log.h"
+confidence = "requirement"
+rationale = "CHARGE_TURN fires for ALL two-turn charge moves; SEMI_INVULNERABLE_ENTER/EXIT only for semi-invuln moves (Fly/Dig/Dive/Bounce/Phantom Force/Sky Drop). Power Herb / harsh-sun Solar Beam skip both. Silent events carry minimal identity."
+updated = "2026-07-10T17:41:45.734Z"
+
+[[record]]
+name = "rich_event_clear_python_driven"
+file = "engine/src/event_log.h"
+confidence = "requirement"
+rationale = "Rich-event stream reset is Python-driven clear(): GameDriver does NOT auto-reset per turn. VOLATILE_APPLY emits only for confusion (consumer reads only volatile=confused). EXP_GAIN shows GROSS exp when net>0 else 0; one LEVEL_UP per level crossed."
+updated = "2026-07-10T17:41:54.334Z"
