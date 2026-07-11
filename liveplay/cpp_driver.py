@@ -98,6 +98,7 @@ def run_one_turn_cpp(
     finalize_on_post_faint: bool = False,
     luck_p0_slot1: LuckProfile | None = None,
     luck_p1_slot1: LuckProfile | None = None,
+    pre_inject: dict[str, int] | None = None,
 ) -> BattleState:
     """Run one deterministic turn through the C++ run_one_turn binding.
 
@@ -115,6 +116,11 @@ def run_one_turn_cpp(
     luck_p0_slot1 / luck_p1_slot1: optional per-slot-1 attacker luck for doubles. When None,
     the key is omitted from the payload entirely → C++ uses the side-level luck for all slots
     (absent key → nullptr → byte-identical engine path).
+
+    pre_inject: optional plain-mode sweep hook for Category-A RNG events. Maps event name
+    strings to engine-native int values. Supported names: METRONOME_MOVE, SLEEP_TALK_MOVE,
+    EFFECT_SPORE_WHICH, ACUPRESSURE_STAT, ROAR_TARGET, TRI_ATTACK_STATUS. Sticky/non-consuming.
+    None → key omitted → nullptr → byte-identical engine path.
 
     Raises UnportedTurn for an `unported:` boundary; re-raises anything else.
     """
@@ -144,6 +150,9 @@ def run_one_turn_cpp(
         payload["luck_p0_slot1"] = damage_luck_payload(luck_p0_slot1)
     if luck_p1_slot1 is not None:
         payload["luck_p1_slot1"] = damage_luck_payload(luck_p1_slot1)
+    # Omit pre_inject key entirely when None — absent key → nullptr → byte-identical C++ path.
+    if pre_inject is not None:
+        payload["pre_inject"] = {str(k): int(v) for k, v in pre_inject.items()}
     try:
         out_json = cpp.run_one_turn(json.dumps(payload))
     except Exception as exc:  # noqa: BLE001 — classify by message, re-raise non-unported.

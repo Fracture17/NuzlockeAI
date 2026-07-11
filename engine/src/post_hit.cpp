@@ -382,16 +382,18 @@ void apply_contact_effects(BattleState& s, const PostHitArgs& a, bool mold_break
                         spore_status = (r <= 11) ? STATUS_SLEEP : (r <= 21 ? STATUS_PARALYSIS : STATUS_POISON);
                     }
                 } else {
-                    // oracle_resolve returns the override i0, or throws NeedsRNG for the driver to handle.
+                    // pre_inject_or_oracle: checks pre_inject map first (plain-mode sweep hook),
+                    // then falls through to oracle_resolve (throws NeedsRNG if no answer).
                     const OracleOverrides* ov = (a.ctx ? a.ctx->overrides : nullptr);
+                    const std::unordered_map<int,int>* pinj = (a.ctx ? a.ctx->pre_inject : nullptr);
                     // Effect Spore is a defender ability firing on the attacker: participants
                     // are (attacker=si, defender=di); we store (si, di) as (side, opp).
                     RngParticipants who{
                         (int8_t)si, (int8_t)side_at(s, si).active_indices[0],
                         (int8_t)di, (int8_t)side_at(s, di).active_indices[0]};
-                    spore_status = oracle_resolve(ov, RngEventC::EFFECT_SPORE_WHICH,
-                                                 {STATUS_SLEEP, STATUS_PARALYSIS, STATUS_POISON},
-                                                 who, s.turn_number);
+                    spore_status = pre_inject_or_oracle(pinj, ov, RngEventC::EFFECT_SPORE_WHICH,
+                                                        {STATUS_SLEEP, STATUS_PARALYSIS, STATUS_POISON},
+                                                        who, s.turn_number);
                 }
                 if (can_apply_status(active_mon(s, si), spore_status, MOVE_NONE, AB_NONE, s)) {
                     apply_status_to(s, si, spore_status);
@@ -476,12 +478,13 @@ void sec_standard_secondary(BattleState& s, const PostHitArgs& a, bool mold_brea
             }
         } else {
             const OracleOverrides* ov = (a.ctx ? a.ctx->overrides : nullptr);
+            const std::unordered_map<int,int>* pinj = (a.ctx ? a.ctx->pre_inject : nullptr);
             RngParticipants who{
                 (int8_t)si, (int8_t)side_at(s, si).active_indices[0],
                 (int8_t)di, (int8_t)side_at(s, di).active_indices[0]};
-            chosen = oracle_resolve(ov, RngEventC::TRI_ATTACK_STATUS,
-                                    {STATUS_BURN, STATUS_FREEZE, STATUS_PARALYSIS},
-                                    who, s.turn_number);
+            chosen = pre_inject_or_oracle(pinj, ov, RngEventC::TRI_ATTACK_STATUS,
+                                          {STATUS_BURN, STATUS_FREEZE, STATUS_PARALYSIS},
+                                          who, s.turn_number);
         }
         if (can_apply_status(active_mon(s, di), chosen, a.move, atk_snapshot.ability, s)) {
             apply_status_to(s, di, chosen);

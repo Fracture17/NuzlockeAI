@@ -172,6 +172,22 @@ inline int oracle_resolve(const OracleOverrides* ov, RngEventC ev, std::vector<i
     throw NeedsRNG{ev, std::move(options)};
 }
 
+// Resolve a Category-A event in plain mode (overrides==nullptr) by checking the pre_inject map
+// before falling through to oracle_resolve (which will throw NeedsRNG).
+// pre_inject maps RngEventC int keys to engine-native ints; nullptr = no injection (throws).
+// Consulted ONLY when overrides==nullptr; when overrides!=nullptr, oracle_resolve handles it.
+inline int pre_inject_or_oracle(const std::unordered_map<int,int>* pre_inject,
+                                 const OracleOverrides* overrides,
+                                 RngEventC ev, std::vector<int> options,
+                                 RngParticipants who = {}, int turn = 0) {
+    if (!overrides && pre_inject) {
+        auto it = pre_inject->find(static_cast<int>(ev));
+        if (it != pre_inject->end())
+            return it->second;
+    }
+    return oracle_resolve(overrides, ev, std::move(options), who, turn);
+}
+
 // Resolve a two-pick Category-A oracle event (MOODY_STATS: boost=i0, drop=i1). Consults
 // transient queue first, then the persistent consumable queue, then throws NeedsRNG.
 inline OracleAnswer oracle_resolve_pair(const OracleOverrides* ov, RngEventC ev,

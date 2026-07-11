@@ -15,6 +15,7 @@
 #include "oracle.h"             // OracleOverrides, NeedsRNG
 #include "policy.h"             // Policy
 #include <nlohmann/json.hpp>
+#include <unordered_map>
 #include <vector>
 
 // Mega table row: maps a held item id to its mega/primal form, ability, and pre-evolution species.
@@ -73,6 +74,9 @@ struct TurnPause {
 //   replay. When non-null and the acting entry's source_slot==1 on that side, the slot-1 luck is
 //   used as the ATTACKER's damage-loop luck. Defender-side luck, residual/effects luck, and
 //   TurnLuck remain side-level. nullptr = use side-level luck (default, all existing behavior).
+// pre_inject: optional plain-mode event-answer map (RngEventC int → value). Sticky/non-consuming:
+//   consulted on every resolution site when overrides==nullptr. Absent key → falls through to
+//   oracle_resolve → NeedsRNG. nullptr = byte-identical engine path (no effect).
 void cpp_run_one_turn(BattleState& state,
                       const std::vector<ExecAction>& actions_p0,
                       const std::vector<ExecAction>& actions_p1,
@@ -86,6 +90,7 @@ void cpp_run_one_turn(BattleState& state,
                       const ActionSnapshot* resume_snap = nullptr,
                       const SpeedTieOrder* forced_tie = nullptr,
                       DamageLoopLuck* luck_p0_slot1 = nullptr,
-                      DamageLoopLuck* luck_p1_slot1 = nullptr);
+                      DamageLoopLuck* luck_p1_slot1 = nullptr,
+                      const std::unordered_map<int,int>* pre_inject = nullptr);
 
 #endif // NUZLOCKE_TURN_H

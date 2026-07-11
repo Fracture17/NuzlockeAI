@@ -115,6 +115,31 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
                   forced_tie_ptr = &forced_tie;
               }
 
+              // pre_inject (optional, sweep plain-mode hook): JSON object mapping event name
+              // strings to int values. Supported events: METRONOME_MOVE, SLEEP_TALK_MOVE,
+              // EFFECT_SPORE_WHICH, ACUPRESSURE_STAT, ROAR_TARGET, TRI_ATTACK_STATUS.
+              // Sticky/non-consuming (re-used on every resolution site this turn).
+              // Unknown name → throw; absent/null key → nullptr (byte-identical engine path).
+              static const std::unordered_map<std::string, int> PRE_INJECT_NAME_TABLE = {
+                  {"METRONOME_MOVE",    static_cast<int>(RngEventC::METRONOME_MOVE)},
+                  {"SLEEP_TALK_MOVE",  static_cast<int>(RngEventC::SLEEP_TALK_MOVE)},
+                  {"EFFECT_SPORE_WHICH", static_cast<int>(RngEventC::EFFECT_SPORE_WHICH)},
+                  {"ACUPRESSURE_STAT", static_cast<int>(RngEventC::ACUPRESSURE_STAT)},
+                  {"ROAR_TARGET",      static_cast<int>(RngEventC::ROAR_TARGET)},
+                  {"TRI_ATTACK_STATUS", static_cast<int>(RngEventC::TRI_ATTACK_STATUS)},
+              };
+              std::unordered_map<int,int> pre_inject_map;
+              const std::unordered_map<int,int>* pre_inject_ptr = nullptr;
+              if (j.contains("pre_inject") && j["pre_inject"].is_object()) {
+                  for (const auto& [name, val] : j["pre_inject"].items()) {
+                      auto it = PRE_INJECT_NAME_TABLE.find(name);
+                      if (it == PRE_INJECT_NAME_TABLE.end())
+                          throw std::runtime_error("pre_inject: unknown event " + name);
+                      pre_inject_map[it->second] = val.get<int>();
+                  }
+                  pre_inject_ptr = &pre_inject_map;
+              }
+
               // luck_p0_slot1/luck_p1_slot1 (optional, doubles sweep replay): per-slot-1 attacker
               // luck. When present, overrides the side-level attacker luck when source_slot==1.
               // Absent → nullptr, side-level luck applies to all slots (all existing behavior).
@@ -132,7 +157,8 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
 
               cpp_run_one_turn(s, a0, a1, luck_p0, luck_p1, tl0, tl1, mega_p0, mega_p1,
                                finalize_on_post_faint, nullptr, nullptr, nullptr, nullptr,
-                               forced_tie_ptr, luck_p0_slot1_ptr, luck_p1_slot1_ptr);
+                               forced_tie_ptr, luck_p0_slot1_ptr, luck_p1_slot1_ptr,
+                               pre_inject_ptr);
 
               nlohmann::json out;
               out["state"] = nlohmann::json::parse(battle_state_to_json(s));
@@ -147,6 +173,9 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
           "Optional luck_p0_slot1/luck_p1_slot1 (DamageLoopLuck dicts): per-slot-1 attacker luck "
           "for doubles sweep replay. When present, overrides the side-level attacker luck when "
           "source_slot==1. Absent/null → side-level luck for all slots. "
+          "Optional pre_inject ({event_name: int}): plain-mode sweep hook for Category-A events. "
+          "Supported names: METRONOME_MOVE, SLEEP_TALK_MOVE, EFFECT_SPORE_WHICH, ACUPRESSURE_STAT, "
+          "ROAR_TARGET, TRI_ATTACK_STATUS. Unknown name → RuntimeError. Absent/null → nullptr. "
           "Pause boundaries raise RuntimeError(unported:).");
 
     // C1.7h Stage 1+4: post-faint switch primitive. JSON-in/JSON-out.

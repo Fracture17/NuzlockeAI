@@ -14,6 +14,7 @@
 #include "native_rng.h"         // NativeRng
 #include "oracle.h"             // OracleOverrides
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 // Deterministic injectable-luck subset consumed by the hit loop's resolvers. crit_threshold +
@@ -35,6 +36,8 @@ struct DamageLoopLuck {
     bool random_mode          = false;
     NativeRng* rng            = nullptr;  // non-null iff random_mode=true
     const OracleOverrides* overrides = nullptr;  // threaded from GameDriver; null on plain run_game path
+    // Plain-mode pre-inject map; nullptr = absent key → byte-identical path.
+    const std::unordered_map<int,int>* pre_inject = nullptr;
 
     // Unit 5: remaining LuckProfile fields so a Dancer re-trigger (which re-runs the full move body)
     // can rebuild the sub-luck structs (PreMove/Guard/Effects/Psywave). The U4 decoder leaves these

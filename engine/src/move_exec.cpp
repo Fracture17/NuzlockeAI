@@ -277,6 +277,7 @@ EffectsLuck make_effects_luck(const DamageLoopLuck& l) {
     e.random_mode            = l.random_mode;
     e.rng                    = l.rng;
     e.overrides              = l.overrides;
+    e.pre_inject             = l.pre_inject;
     return e;
 }
 PsywaveLuck make_psywave_luck(const DamageLoopLuck& l) {

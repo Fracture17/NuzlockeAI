@@ -12,6 +12,7 @@
 #include "native_rng.h"   // NativeRng
 #include "oracle.h"       // OracleOverrides
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 struct MoveData;
@@ -61,6 +62,10 @@ struct ExecCtx {
     // Oracle override map for Category-A events. null = no overrides (all events throw NeedsRNG
     // or the legacy "unported:" runtime_error when not wired). Non-null = look up answer first.
     const OracleOverrides* overrides = nullptr;
+
+    // Plain-mode pre-inject map: sticky per-turn (event int → value) consulted when overrides==nullptr.
+    // nullptr = no injection → byte-identical engine path. Non-null = check before throwing NeedsRNG.
+    const std::unordered_map<int,int>* pre_inject = nullptr;
 };
 
 // Deterministic injectable-luck subset for the resolvers reached here. accuracy_threshold drives

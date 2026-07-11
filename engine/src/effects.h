@@ -8,6 +8,7 @@
 #include "native_rng.h"   // NativeRng
 #include "oracle.h"       // OracleOverrides
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 // Probe options threaded from the binding (mirrors the deterministic LuckProfile fields the
@@ -21,6 +22,8 @@ struct EffectsLuck {
     bool   random_mode = false;        // true = draws come from rng
     NativeRng* rng = nullptr;          // non-null iff random_mode=true
     const OracleOverrides* overrides = nullptr;  // threaded from GameDriver; null on plain run_game path
+    // Plain-mode pre-inject map; nullptr = absent key → byte-identical path.
+    const std::unordered_map<int,int>* pre_inject = nullptr;
 };
 
 // _apply_entry_hazards(sides, entering_side_idx, state): SR / Spikes / T-Spikes / Sticky Web.

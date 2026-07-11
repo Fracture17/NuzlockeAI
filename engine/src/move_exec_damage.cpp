@@ -231,6 +231,7 @@ EffectsLuck make_effects_luck(const DamageLoopLuck& luck) {
     l.random_mode = luck.random_mode;
     l.rng = luck.rng;
     l.overrides = luck.overrides;
+    l.pre_inject = luck.pre_inject;
     return l;
 }
 

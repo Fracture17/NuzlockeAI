@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <random>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 // Forward-declare cpp_apply_switch to avoid circular include (orchestrate.h includes turn.h).
@@ -137,6 +138,7 @@ EffectsLuck effects_luck_from(const DamageLoopLuck& d) {
     e.random_mode            = d.random_mode;
     e.rng                    = d.rng;
     e.overrides              = d.overrides;
+    e.pre_inject             = d.pre_inject;
     return e;
 }
 
@@ -190,9 +192,20 @@ void cpp_resolve_pending_switches(BattleState& state,
             throw std::runtime_error("unported: pending_switch");
     }
 
-    // Require policies + action_log for any resolution.
-    if (!policies || !action_log)
+    // Require policies for player-triggered switches (u_turn/eject_button/red_card).
+    // Roar via pre_inject can resolve without policies (inject supplies the target directly).
+    const std::unordered_map<int,int>* pinj_check = ctx ? ctx->pre_inject : nullptr;
+    bool has_player_switch = false;
+    for (const PendingSwitch& ps : pending)
+        if (ps.reason != "roar") { has_player_switch = true; break; }
+    bool has_unresolvable_roar = false;
+    for (const PendingSwitch& ps : pending)
+        if (ps.reason == "roar" && !overrides && !pinj_check) { has_unresolvable_roar = true; break; }
+    if (!policies && (has_player_switch || has_unresolvable_roar))
         throw std::runtime_error("unported: pending_switch");
+    // When action_log is null (plain binding), redirect writes to a local discard log.
+    nlohmann::json local_log = nlohmann::json::array();
+    if (!action_log) action_log = &local_log;
 
     // --- Phaze (roar) causes: handled FIRST, matching Python's _handle_pending_switches order ---
     // Python processes the first roar switch entry; multiple roar entries in singles are impossible
@@ -218,8 +231,11 @@ void cpp_resolve_pending_switches(BattleState& state,
         // Cat-A answer via policy select_phaze (ReplayPolicy reads from the trace).
         // Oracle pause mode (overrides != null, not forced): oracle_resolve honors an injected
         // answer or throws NeedsRNG so the GameDriver pauses.
-        // Plain whole-game runner (overrides == null): policy does a uniform random draw.
+        // Plain pre_inject mode (overrides == null, ctx->pre_inject set): use the injected team idx;
+        //   invalid option (fainted/active target) → throw std::runtime_error (fail loud).
+        // Plain whole-game runner (overrides == null, no pre_inject): policy does a uniform random draw.
         int team_idx;
+        const std::unordered_map<int,int>* pinj = ctx ? ctx->pre_inject : nullptr;
         if (rng && rng->forced) {
             team_idx = policies[phaze_side]->select_phaze(bench, state, phaze_side).switch_to_slot;
         } else if (overrides) {
@@ -231,6 +247,17 @@ void cpp_resolve_pending_switches(BattleState& state,
                 (int8_t)phaze_side,    (int8_t)side_at(state, phaze_side).active_indices[0]};
             team_idx = oracle_resolve(overrides, RngEventC::ROAR_TARGET, options,
                                       who, state.turn_number);
+        } else if (pinj) {
+            auto it = pinj->find(static_cast<int>(RngEventC::ROAR_TARGET));
+            if (it == pinj->end())
+                throw NeedsRNG{RngEventC::ROAR_TARGET, {}};
+            team_idx = it->second;
+            // Validate: injected target must be a live bench candidate (not fainted, not active).
+            bool valid = false;
+            for (const ExecAction& c : bench)
+                if (c.switch_to_slot == team_idx) { valid = true; break; }
+            if (!valid)
+                throw std::runtime_error("pre_inject: ROAR_TARGET invalid — not a live bench candidate");
         } else {
             team_idx = policies[phaze_side]->select_phaze(bench, state, phaze_side).switch_to_slot;
         }
@@ -296,10 +323,18 @@ void cpp_run_one_turn(BattleState& state,
                       const ActionSnapshot* resume_snap,
                       const SpeedTieOrder* forced_tie,
                       DamageLoopLuck* luck_p0_slot1,
-                      DamageLoopLuck* luck_p1_slot1) {
+                      DamageLoopLuck* luck_p1_slot1,
+                      const std::unordered_map<int,int>* pre_inject) {
     // Plain mode: no snapshots, NeedsRNG propagates unchanged.
     // Oracle mode: per-action snapshot + NeedsRNG→TurnPause catch/restore.
     const bool oracle = (overrides != nullptr);
+
+    // Thread pre_inject into the per-side luck structs so effects/post_hit sites can consult it.
+    // Only set when pre_inject is non-null (absent → nullptr → byte-identical path).
+    if (pre_inject) {
+        luck_p0.pre_inject = pre_inject;
+        luck_p1.pre_inject = pre_inject;
+    }
 
     // Mutable per-side action lists (recharge forcing rewrites entries before the queue is built).
     std::vector<ExecAction> actions[2] = {actions_p0, actions_p1};
@@ -431,7 +466,8 @@ void cpp_run_one_turn(BattleState& state,
     // across movers — e.g. mover 1's Protect must still be visible when mover 2 attacks. Per-actor
     // fields are overwritten each iteration below.
     ExecCtx ctx;
-    ctx.overrides = overrides;  // no-op in plain mode (nullptr); threaded into ExecCtx in oracle mode
+    ctx.overrides   = overrides;   // no-op in plain mode (nullptr); threaded into ExecCtx in oracle mode
+    ctx.pre_inject  = pre_inject;  // no-op when nullptr; plain-mode sweep hook for Cat-A events
 
     // In oracle mode: snapshot before each action (perf gate: plain mode never allocates these).
     // Declared once and filled at top of each iteration to avoid reuse-after-move.
@@ -513,9 +549,10 @@ void cpp_run_one_turn(BattleState& state,
                 ? (luck_p0_slot1_ptr ? *luck_p0_slot1_ptr : luck_p0)
                 : (luck_p1_slot1_ptr ? *luck_p1_slot1_ptr : luck_p1);
 
-            // Plain controlled mode: fail loud BEFORE building options (no else-random branch in
-            // Python _phase_await_sub_move — sub_move in controlled mode is oracle-only).
-            if (!oracle && !mv_luck.random_mode)
+            // Plain controlled mode: fail loud unless pre_inject supplies the answer.
+            // pre_inject is the sweep hook: it resolves the sub-move without the oracle/GameDriver.
+            // Oracle and random_mode paths are unaffected.
+            if (!oracle && !mv_luck.random_mode && !pre_inject)
                 throw std::runtime_error("unported: sub_move");
 
             std::vector<int> options = (used_move == MV_METRONOME)
@@ -545,21 +582,32 @@ void cpp_run_one_turn(BattleState& state,
                     chosen = mv_luck.rng->choice(options);
                 }
             } else {
-                // Only reachable in oracle mode (plain controlled throws above).
+                // Reachable in oracle mode or plain mode with pre_inject.
                 // Sub-move selection (METRONOME_MOVE / SLEEP_TALK_MOVE) is a Category-A oracle event:
                 // the answer is the chosen move id, options are the callable-move list. Mirrors
                 // Python simulator.py _phase_await_sub_move (answer not in options => sub-move fails).
                 RngEventC sub_event = (used_move == MV_METRONOME)
                     ? RngEventC::METRONOME_MOVE : RngEventC::SLEEP_TALK_MOVE;
-                try {
+                if (oracle) {
+                    // Oracle mode: pause/resume via GameDriver.
+                    try {
+                        RngParticipants who{
+                            (int8_t)side_idx, (int8_t)source_slot,
+                            (int8_t)(1 - side_idx),
+                            (int8_t)side_at(state, 1 - side_idx).active_indices[0]};
+                        chosen = oracle_resolve(overrides, sub_event, options,
+                                                who, state.turn_number);
+                    } catch (NeedsRNG& nr) {
+                        pause(nr);
+                    }
+                } else {
+                    // Plain mode with pre_inject: consult the map; absent key throws NeedsRNG.
                     RngParticipants who{
                         (int8_t)side_idx, (int8_t)source_slot,
                         (int8_t)(1 - side_idx),
                         (int8_t)side_at(state, 1 - side_idx).active_indices[0]};
-                    chosen = oracle_resolve(overrides, sub_event, options,
-                                            who, state.turn_number);
-                } catch (NeedsRNG& nr) {
-                    pause(nr);
+                    chosen = pre_inject_or_oracle(pre_inject, nullptr, sub_event, options,
+                                                  who, state.turn_number);
                 }
                 bool valid = false;
                 for (int o : options) if (o == chosen) { valid = true; break; }
@@ -598,7 +646,8 @@ void cpp_run_one_turn(BattleState& state,
             }
             ctx.has_exp_participants = true;
             ctx.exp_participants = exp_participants;
-            ctx.overrides = overrides;
+            ctx.overrides  = overrides;
+            ctx.pre_inject = pre_inject;
 
             // Per-slot-1 attacker luck selection for the sub-action execution.
             DamageLoopLuck& luck_atk_sub = (side_idx == 0)
@@ -669,7 +718,8 @@ void cpp_run_one_turn(BattleState& state,
         }
         ctx.has_exp_participants = true;
         ctx.exp_participants = exp_participants;
-        ctx.overrides = overrides;
+        ctx.overrides  = overrides;
+        ctx.pre_inject = pre_inject;
 
         // Per-slot-1 attacker luck selection: when source_slot==1 and the slot-1 pointer is set,
         // use it as the attacker's damage-loop luck. Defender-side luck stays side-level.

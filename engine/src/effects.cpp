@@ -1132,8 +1132,9 @@ static bool apply_volatile_move(BattleState& s, int side_idx, int32_t move, int 
             RngParticipants who{
                 (int8_t)side_idx, (int8_t)mside.active_indices[0],
                 (int8_t)opp,      (int8_t)oside.active_indices[0]};
-            stat_idx = oracle_resolve(luck.overrides, RngEventC::ACUPRESSURE_STAT,
-                                      {0,1,2,3,4,5,6}, who, s.turn_number);
+            stat_idx = pre_inject_or_oracle(luck.pre_inject, luck.overrides,
+                                            RngEventC::ACUPRESSURE_STAT,
+                                            {0,1,2,3,4,5,6}, who, s.turn_number);
         }
         change_stat_stage(s, side_idx, stat_idx, +2, false, false, false);
         return true;
