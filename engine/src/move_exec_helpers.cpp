@@ -285,7 +285,12 @@ bool cpp_check_leppa_berry(BattleState& state, int side_idx, int slot, int opp_s
         static const int32_t AB_CHEEK_POUCH = 167;
         if (m2.ability == AB_CHEEK_POUCH) {
             int32_t extra = std::max(1, m2.max_hp / 3);
+            int32_t hp_before_pouch = m2.hp;
             m2.hp = std::min(m2.max_hp, m2.hp + extra);
+            // HEAL source=cheek_pouch (Python _helpers.py:679): emit unconditionally,
+            // mirroring effects.cpp on_berry_consumed.
+            rich_log_heal(state.turn_number, m2.species, m2.hp - hp_before_pouch, m2.hp,
+                          side_idx, SourceTag::CHEEK_POUCH);
         }
     }
     apply_unburden(state, side_idx);

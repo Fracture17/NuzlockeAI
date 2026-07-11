@@ -233,7 +233,13 @@ void apply_post_hit_items(BattleState& s, const PostHitArgs& a,
                     PokemonState& holder = active_mon(s, di);
                     if (holder.ability == /*CHEEK_POUCH*/ 167) {
                         int32_t extra = std::max<int32_t>(1, holder.max_hp / 3);
+                        int32_t hp_before_pouch = holder.hp;
                         holder.hp = std::min<int32_t>(holder.max_hp, holder.hp + extra);
+                        // HEAL source=cheek_pouch (Python _helpers.py:679): emit
+                        // unconditionally, mirroring effects.cpp on_berry_consumed.
+                        rich_log_heal(s.turn_number, holder.species,
+                                      holder.hp - hp_before_pouch, holder.hp, di,
+                                      SourceTag::CHEEK_POUCH);
                     }
                     apply_unburden(s, di);
                 } else {

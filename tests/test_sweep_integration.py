@@ -1601,7 +1601,6 @@ class TestPsywaveSweepReconciliation:
         alakazam = make_mon(Species.ALAKAZAM, moves=(Move.PSYWAVE,), level=100)
         return make_battle(blissey, alakazam), blissey
 
-    @pytest.mark.skip(reason="Psywave does not emit LogEvent.DAMAGE in C++ engine; roll enumeration cannot work until engine fix")
     def test_psywave_sweep_yields_survivors(self):
         state, blissey = self._make_state()
         hp_before = blissey.hp
@@ -1613,7 +1612,6 @@ class TestPsywaveSweepReconciliation:
         )
         assert len(candidates) >= 1
 
-    @pytest.mark.skip(reason="Psywave does not emit LogEvent.DAMAGE in C++ engine; roll enumeration cannot work until engine fix")
     def test_psywave_sweep_is_stable(self):
         state, blissey = self._make_state()
         hp_before = blissey.hp

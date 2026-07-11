@@ -812,10 +812,19 @@ void cpp_handle_fixed_damage_action(BattleState& state, int side_idx, int defend
     if (fd_eff == 0.0) return;  // MOVE_IMMUNE log omitted.
 
     int32_t attacker_ability = active_mon(state, side_idx).ability;
+    // Snapshot pre-damage identity for the DAMAGE emit (mirrors the damage-loop emit at
+    // the per-hit site; cpp_apply_damage may KO or mutate the defender in place).
+    int32_t fd_target_species = active_mon(state, defender_idx).species;
+    int32_t fd_attacker_slot0 = side_at(state, side_idx).active_indices[0];
     MoveExecLuck mel = make_exec_luck(luck_def.proc_threshold, luck_def.random_mode, luck_def.rng, luck_def.overrides);
     int32_t hp_removed_fixed = cpp_apply_damage(state, defender_idx, fixed_dmg, attacker_ability,
                      mel, md.category, -1, 0);
     int32_t actual_fixed = std::max(0, hp_removed_fixed);
+    // DAMAGE emit (Python core.py:2421): amount is the fixed damage (not clamped hp_removed);
+    // hp_after from the post-apply defender. source=move. Fixed damage never crits.
+    rich_log_damage(state.turn_number, fd_target_species, fixed_dmg,
+                    active_mon(state, defender_idx).hp, side_idx, fd_attacker_slot0,
+                    defender_idx, SourceTag::MOVE);
     bool fd_fainted = active_mon(state, defender_idx).fainted;
     if (fd_fainted) {
         cpp_apply_on_ko_effects(state, side_idx);
