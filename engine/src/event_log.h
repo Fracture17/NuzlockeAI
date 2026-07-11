@@ -20,7 +20,7 @@ static constexpr int32_t RICH_UNSET = INT32_MIN;
 // strings the CONSUMED events actually distinguish are enumerated (DAMAGE source,
 // HEAL source, VOLATILE_APPLY "confused"); the rest use MOVE/ABILITY/RESIDUAL/ITEM
 // broad buckets since the reconciler never reads them.
-enum class SourceTag : int32_t { NONE = 0, MOVE, BERRY, CHEEK_POUCH, ABILITY, ITEM, RESIDUAL };
+enum class SourceTag : int32_t { NONE = 0, MOVE, BERRY, CHEEK_POUCH, ABILITY, ITEM, RESIDUAL, RECOIL };
 enum class VolatileTag : int32_t { NONE = 0, CONFUSED, TAUNT, ENCORE, LEECH_SEEDED };
 enum class CauseTag : int32_t { NONE = 0 };
 

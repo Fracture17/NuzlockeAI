@@ -101,15 +101,6 @@ class TestHasFaintedActive:
 # ---------------------------------------------------------------------------
 
 class TestSweepPostFaint:
-    @pytest.mark.xfail(
-        reason=(
-            "NEW sweep path passes action0=switch_to(1), action1=None to run_with_capture "
-            "→ _encode_actions(None) raises TypeError → candidate filtered → 0 survivors. "
-            "Cross-boundary side-0 post-faint switches require apply_switch_cpp, not "
-            "run_one_turn_cpp. FAILED-NEEDS-REVIEW."
-        ),
-        strict=True,
-    )
     def test_produces_exactly_one_candidate(self):
         """Post-faint state + correct PLAYER_SWITCHINMON → exactly 1 candidate, Pidgey active."""
         state = _post_faint_state(Species.ROOKIDEE, Species.PIDGEY)
@@ -157,14 +148,6 @@ class TestSweepPostFaint:
         with pytest.raises(SimulationError, match="side 0"):
             run_candidate_sweep([], hp_deltas=[], initial_candidates=[candidate])
 
-    @pytest.mark.xfail(
-        reason=(
-            "Same underlying issue as test_produces_exactly_one_candidate: "
-            "action1=None → TypeError in _encode_actions → candidate filtered. "
-            "FAILED-NEEDS-REVIEW."
-        ),
-        strict=True,
-    )
     def test_empty_hp_deltas_accepted(self):
         """Post-faint sweep with empty HP deltas must not fail and must produce a candidate."""
         state = _post_faint_state(Species.ROOKIDEE, Species.PIDGEY)

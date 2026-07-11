@@ -369,6 +369,37 @@ def run_to_decision_boundary(
     inject = pre_inject_payload(config.extra_pre_inject)
 
     try:
+        # Step 0: post-faint boundary state (party prompt). Sweep states are always at
+        # decision boundaries, so a fainted active with a living bench means the previous
+        # turn already finalized and the actions ARE the replacement switches. Apply them
+        # via apply_switch_cpp — run_one_turn_cpp starts a fresh turn and requires both
+        # actions (action1=None would TypeError in _encode_actions). Mirrors OLD, where
+        # sim.start(state) inferred AWAIT_POST_FAINT_SWITCH and step((switch, None)) worked.
+        pf0 = _side_has_fainted_active(state.sides[0]) and _side_has_living_bench(state.sides[0])
+        pf1 = _side_has_fainted_active(state.sides[1]) and _side_has_living_bench(state.sides[1])
+        if pf0 or pf1:
+            current = state
+            for side_idx, needs, action in ((0, pf0, action0), (1, pf1, action1)):
+                if not needs:
+                    continue
+                acts = list(action) if isinstance(action, (list, tuple)) else [action]
+                acts = [a for a in acts if a is not None]
+                side = current.sides[side_idx]
+                fainted_slots = [
+                    sp for sp, ti in enumerate(side.active_indices) if side.team[ti].fainted
+                ]
+                if len(acts) < len(fainted_slots):
+                    # Missing replacement action — fail loudly (caught below → candidate filtered).
+                    raise ValueError(
+                        f"post-faint boundary: side {side_idx} needs {len(fainted_slots)} "
+                        f"replacement switch(es) but got {len(acts)} action(s)"
+                    )
+                for slot_pos, act in zip(fainted_slots, acts):
+                    current = _cpp_driver.apply_switch_cpp(
+                        current, side_idx, act.switch_to_slot, source_slot=slot_pos
+                    )
+            return current
+
         # Step 1: run the turn
         post_turn = _cpp_driver.run_one_turn_cpp(
             state, action0, action1,

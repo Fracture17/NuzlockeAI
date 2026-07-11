@@ -268,7 +268,7 @@ def _present(value: int) -> bool:
 # The engine stores string kwargs as int tags to keep entries POD; this is the single
 # place they are re-expanded. NONE (0) means "no such kwarg" -> dropped. E1b grows these.
 _SOURCE_TAG_STRINGS = {1: "move", 2: "berry", 3: "cheek_pouch", 4: "ability",
-                       5: "item", 6: "residual"}
+                       5: "item", 6: "residual", 7: "recoil"}
 _VOLATILE_TAG_STRINGS = {1: "confused", 2: "taunt", 3: "encore", 4: "leech_seeded"}
 _CAUSE_TAG_STRINGS: dict = {}
 

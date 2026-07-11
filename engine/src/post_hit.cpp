@@ -860,6 +860,10 @@ void cpp_apply_post_hit_effects(BattleState& s, const PostHitArgs& a,
             if (!attacker.fainted) {
                 int32_t nh = std::max(0, attacker.hp - recoil);
                 attacker.hp = nh;
+                // Mirror Python post_hit.py:831 log(DAMAGE, source="recoil"): no attacker
+                // kwargs; defender_side = the recoiling mon's own side (state-neutral).
+                rich_log_damage(s.turn_number, attacker.species, recoil, nh,
+                                RICH_UNSET, RICH_UNSET, si, SourceTag::RECOIL);
                 if (nh == 0) cpp_faint_active(s, si, /*notify_soul_heart=*/false);
             }
         }
@@ -871,6 +875,9 @@ void cpp_apply_post_hit_effects(BattleState& s, const PostHitArgs& a,
             int32_t recoil = std::max(1, attacker.max_hp / 4);
             int32_t nh = std::max(0, attacker.hp - recoil);
             attacker.hp = nh;
+            // Mirror Python post_hit.py:849 log(DAMAGE, source="recoil") for Struggle.
+            rich_log_damage(s.turn_number, attacker.species, recoil, nh,
+                            RICH_UNSET, RICH_UNSET, si, SourceTag::RECOIL);
             if (nh == 0) cpp_faint_active(s, si, /*notify_soul_heart=*/false);
         }
     }

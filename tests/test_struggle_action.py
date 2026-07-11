@@ -204,12 +204,7 @@ class TestStruggleEnumeration:
 
 class TestStruggleExecution:
     def test_struggle_deals_damage_and_recoil_no_pp(self):
-        """Struggle deals damage to the defender and recoil (1/4 max_hp) to the attacker.
-
-        NOTE: The NEW C++ engine does not emit a DAMAGE log event for Struggle recoil
-        (FAILED-NEEDS-REVIEW for the recoil log event). The HP change IS applied correctly,
-        so we assert on HP directly. The MOVE_USE event and no-PP assertions remain strong.
-        """
+        """Struggle deals damage to the defender and recoil (1/4 max_hp) to the attacker."""
         attacker = make_mon(Species.MAGIKARP, moves=(Move.BOUNCE,))._replace(move_pp=(0, 0, 0, 0))
         defender = make_mon(Species.BULBASAUR, moves=(Move.SPLASH,))
         # side 0 = defender (uses slot(0)=Splash), side 1 = attacker (uses Struggle)
@@ -221,8 +216,9 @@ class TestStruggleExecution:
         assert_event(log, LogEvent.MOVE_USE, move=Move.STRUGGLE)
         # Defender (side 0) took damage.
         assert active(final, 0).hp < defender.max_hp
-        # Recoil = 1/4 of the Struggler's max HP — verified via HP change (log event not emitted).
+        # Recoil = 1/4 of the Struggler's max HP.
         expected_recoil = max(1, attacker.max_hp // 4)
+        assert_event(log, LogEvent.DAMAGE, source="recoil", amount=expected_recoil)
         assert active(final, 1).hp == attacker.max_hp - expected_recoil
         # Struggle consumes no PP.
         assert active(final, 1).move_pp == (0, 0, 0, 0)
