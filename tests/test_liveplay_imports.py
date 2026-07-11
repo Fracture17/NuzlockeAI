@@ -38,14 +38,8 @@ def test_import_sweep():
 
 
 # ---------------------------------------------------------------------------
-# b) engine_select stubs raise NotImplementedError.
+# b) engine_select exports are callable (run_candidate_sweep is now wired, not a stub).
 # ---------------------------------------------------------------------------
-
-def test_run_candidate_sweep_stub():
-    from liveplay.engine_select import run_candidate_sweep
-    with pytest.raises(NotImplementedError):
-        run_candidate_sweep([], [], [])
-
 
 def test_enumerate_legal_actions_importable():
     # enumerate_legal_actions is now a real implementation (not a stub); verify it is importable.

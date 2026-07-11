@@ -175,7 +175,6 @@ class TestRandomPolicyForcedSwitch:
             policy.choose_forced_switch(state)
 
 
-@pytest.mark.skip(reason="Stage E: enumerate_legal_actions not wired")
 class TestRandomPolicyBattleAction:
 
     def _make_battle_state(self, has_bench=True, has_moves=True):
@@ -248,7 +247,6 @@ class TestRandomPolicyBattleAction:
 # rejected, hanging forever at "What will Natu do?")
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skip(reason="Stage E: enumerate_legal_actions not wired")
 class TestCanSwitchOut:
 
     def _state_with(self, active, bench_species=Species.CHARMANDER, opp=None):
@@ -285,7 +283,6 @@ class TestCanSwitchOut:
         assert can_switch_out(self._state_with(active, opp=[trapper])) is False
 
 
-@pytest.mark.skip(reason="Stage E: enumerate_legal_actions not wired")
 class TestRandomPolicyTrapping:
 
     def _trapped_state(self, *, item=Item.NONE, has_moves=True):

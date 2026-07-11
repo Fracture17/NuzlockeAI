@@ -1,7 +1,5 @@
 # Tests for liveplay/sweep_io.py — lossless JSON round-trip codec for sweep inputs/outputs.
-# TRIM: test_round_tripped_inputs_produce_identical_engine_output and
-# test_output_candidates_round_trip dropped (call run_candidate_sweep stub).
-# Also dropped: the diff_harness import (not carried to new repo).
+# diff_harness not carried to new repo; comparison uses direct candidate-state equality.
 import json
 import dataclasses
 
@@ -41,7 +39,7 @@ def _make_sweep_input():
 
 
 # ---------------------------------------------------------------------------
-# Round-trip equality: input components only (no engine call)
+# Round-trip equality: input components and engine output
 # ---------------------------------------------------------------------------
 
 class TestRoundTripEquality:
@@ -58,6 +56,45 @@ class TestRoundTripEquality:
         assert hp_deltas == h2
         assert initial_candidates == c2
         assert action_groups == ag2
+
+    def test_round_tripped_inputs_produce_identical_engine_output(self, tmp_path):
+        """Original and round-tripped inputs through run_candidate_sweep must produce identical results."""
+        from liveplay.sweep_io import dump_sweep_input, load_sweep_input
+        from liveplay.engine_select import run_candidate_sweep
+        messages, hp_deltas, initial_candidates, action_groups = _make_sweep_input()
+
+        original_result = run_candidate_sweep(
+            messages, hp_deltas, initial_candidates, action_groups=action_groups
+        )
+
+        path = tmp_path / "sweep.json"
+        dump_sweep_input(messages, hp_deltas, initial_candidates, action_groups, path)
+        m2, h2, c2, ag2 = load_sweep_input(path)
+
+        rt_result = run_candidate_sweep(m2, h2, c2, action_groups=ag2)
+
+        # Compare final states (parent_candidate stripped on load, so compare state only)
+        orig_states = {c.state for c in original_result}
+        rt_states = {c.state for c in rt_result}
+        assert orig_states == rt_states, (
+            f"Round-trip produced divergence: orig={len(orig_states)} rt={len(rt_states)}"
+        )
+
+    def test_output_candidates_round_trip(self, tmp_path):
+        """Sweep output (list[Candidate]) must also survive a round-trip losslessly."""
+        from liveplay.sweep_io import dump_candidates, load_candidates
+        from liveplay.engine_select import run_candidate_sweep
+        messages, hp_deltas, initial_candidates, action_groups = _make_sweep_input()
+        result = run_candidate_sweep(
+            messages, hp_deltas, initial_candidates, action_groups=action_groups
+        )
+        assert len(result) >= 1
+
+        path = tmp_path / "candidates.json"
+        dump_candidates(result, path)
+        loaded = load_candidates(path)
+
+        assert result == loaded
 
 
 # ---------------------------------------------------------------------------

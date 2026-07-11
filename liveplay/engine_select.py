@@ -78,6 +78,9 @@ def run_candidate_sweep(
     hp_deltas: list of HpDeltaSeq records — identity-bound (side, species, slot, deltas, max_hp).
     action_groups: optional structured message groups for secondary effect injection.
     """
-    raise NotImplementedError("Stage E: C++ sweep not wired")
+    # Lazy import avoids a cycle: sweep_run imports SimulationError from engine_select at
+    # module top, so importing sweep_run at module top here would create a circular dependency.
+    from liveplay.sweep_run import run_candidate_sweep as _run
+    return _run(messages, hp_deltas, initial_candidates, action_groups)
 
 
