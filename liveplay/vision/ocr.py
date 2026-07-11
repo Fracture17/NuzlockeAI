@@ -130,6 +130,24 @@ _ALPHA_NUM_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01234567
 _ALPHA_CHARS     = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 _DIGIT_CHARS     = "0123456789"
 
+# Name pass for HP boxes, where the name shares a glyph row with "Lv##". The "Lv"
+# tile is included as a token so _name_before_level can hard-stop the name at the
+# level: FONT_SMALL's digit "0" and letter "O" templates are pixel-identical, so an
+# alpha-only pass silently reads the level's 0 as a trailing "O" on the name
+# (e.g. "BudewO" at Lv 10), which splits name-keyed HP logs when the level rolls
+# over and the artifact disappears (Allen1 sweep crash, 2026-07-11).
+_HPBOX_NAME_CHARS: tuple[str, ...] = ("Lv",) + tuple(_ALPHA_CHARS)
+
+
+def _name_before_level(name_text: str) -> str | None:
+    """Extract the mon name from an HP-box name-row scan, truncated at 'Lv'.
+
+    Everything from the first 'Lv' token onward is level territory — including
+    any digit glyphs the alpha charset would misread as letters. No species
+    display name contains the exact substring 'Lv', so the cut is unambiguous.
+    """
+    return _extract_name(name_text.split("Lv", 1)[0])
+
 
 def read_battle_message(image: Image.Image) -> BattleMessageResult:
     """OCR the battle message / move selection box using FONT_NORMAL and FONT_NARROW.
@@ -154,7 +172,7 @@ def read_player_info(image: Image.Image) -> PlayerInfoResult:
     x=55, y=22. The "Lv" prefix is a single font tile, matched via the "Lv" token.
     """
     strip = _crop(image, (0, 4, image.width, 7))
-    name_text  = match_text(strip, _ALPHA_CHARS, fonts=("small",))
+    name_text  = match_text(strip, _HPBOX_NAME_CHARS, fonts=("small",))
     level_text = match_text(strip, ("Lv",) + tuple(_DIGIT_CHARS), fonts=("small",))
 
     hp_img  = _crop(image, (55, 22, 25, 7))
@@ -162,7 +180,7 @@ def read_player_info(image: Image.Image) -> PlayerInfoResult:
     hp_current, hp_max = _parse_hp_fraction(hp_text)
 
     return PlayerInfoResult(
-        name=_extract_name(name_text),
+        name=_name_before_level(name_text),
         level=_parse_level(level_text),
         hp_current=hp_current,
         hp_max=hp_max,
@@ -177,11 +195,11 @@ def read_opponent_info(image: Image.Image) -> OpponentInfoResult:
     single font tile matched via the "Lv" token.
     """
     strip = _crop(image, (0, 3, image.width, 7))
-    name_text  = match_text(strip, _ALPHA_CHARS, fonts=("small",))
+    name_text  = match_text(strip, _HPBOX_NAME_CHARS, fonts=("small",))
     level_text = match_text(strip, ("Lv",) + tuple(_DIGIT_CHARS), fonts=("small",))
 
     return OpponentInfoResult(
-        name=_extract_name(name_text),
+        name=_name_before_level(name_text),
         level=_parse_level(level_text),
         status=None,
     )

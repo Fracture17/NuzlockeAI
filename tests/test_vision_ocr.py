@@ -197,3 +197,78 @@ def test_read_party_menu_slots():
     if r1 is not None:
         assert r1.name == "Rookidee", f"Expected slot 1 name 'Rookidee', got: {r1.name!r}"
         assert r1.hp_max == 19,       f"Expected slot 1 hp_max 19, got: {r1.hp_max!r}"
+
+
+# ---------------------------------------------------------------------------
+# Name/level separation — the level's "0" digit must never leak into the name
+# ---------------------------------------------------------------------------
+# Regression for the Allen1 stress crash (2026-07-11): FONT_SMALL's digit "0"
+# and letter "O" templates are pixel-identical, so at Lv 10 the alpha-only name
+# pass read the level's 0 as a trailing "O" ("BudewO"). At Lv 11 the artifact
+# vanished, splitting one mon's HP log across two name keys and dropping the
+# final reading — which crashed the sweep. The name pass now includes the "Lv"
+# tile as a token and truncates the name at the first "Lv" match.
+
+def _paste_glyph(arr, tmpl, x, y):
+    h, w = tmpl.shape
+    arr[y:y + h, x:x + w][tmpl == 1] = [255, 255, 255]
+
+
+def _make_hp_box(name: str, level: str, hp: str | None, name_row_y: int):
+    """Synthesize an HP-box crop from the game's FONT_SMALL templates.
+
+    match_text does exact pixel matching against these same templates, so a
+    pasted layout is a faithful reproduction of the in-game render.
+    """
+    import numpy as np
+    from liveplay.vision.font_matcher import _load
+    templates, advances = _load("small")
+    arr = np.zeros((30, 85, 3), dtype=np.uint8)
+    x = 2
+    for ch in name:
+        _paste_glyph(arr, templates[ch], x, name_row_y)
+        x += advances[ch]
+    x = 48
+    _paste_glyph(arr, templates["Lv"], x, name_row_y)
+    x += advances["Lv"]
+    for ch in level:
+        _paste_glyph(arr, templates[ch], x, name_row_y)
+        x += advances[ch]
+    if hp is not None:
+        x = 55
+        for ch in hp:
+            _paste_glyph(arr, templates[ch], x, 22)
+            x += advances[ch]
+    return Image.fromarray(arr, "RGB")
+
+
+class TestNameLevelSeparation:
+    def test_player_lv10_zero_digit_not_glommed_onto_name(self):
+        r = read_player_info(_make_hp_box("Budew", "10", "7/29", name_row_y=4))
+        assert r.name == "Budew", f"level digit leaked into name: {r.name!r}"
+        assert r.level == 10
+        assert (r.hp_current, r.hp_max) == (7, 29)
+
+    def test_player_lv11_control(self):
+        r = read_player_info(_make_hp_box("Budew", "11", "18/30", name_row_y=4))
+        assert r.name == "Budew"
+        assert r.level == 11
+        assert (r.hp_current, r.hp_max) == (18, 30)
+
+    def test_player_level_with_two_zeros(self):
+        r = read_player_info(_make_hp_box("Natu", "100", "31/31", name_row_y=4))
+        assert r.name == "Natu", f"level digits leaked into name: {r.name!r}"
+        assert r.level == 100
+
+    def test_opponent_lv10_zero_digit_not_glommed_onto_name(self):
+        r = read_opponent_info(_make_hp_box("Litleo", "10", None, name_row_y=3))
+        assert r.name == "Litleo", f"level digit leaked into name: {r.name!r}"
+        assert r.level == 10
+
+    def test_real_crash_frame_budew_lv11(self):
+        """The actual /tmp crop from the Allen1 crash frame (Budew, Lv 11, 18/30)."""
+        path = Path(__file__).parent / "fixtures" / "region_player_hp_budew_lv11_18of30.png"
+        r = read_player_info(Image.open(path))
+        assert r.name == "Budew"
+        assert r.level == 11
+        assert (r.hp_current, r.hp_max) == (18, 30)

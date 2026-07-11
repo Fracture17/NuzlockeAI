@@ -2027,3 +2027,10 @@ file = "liveplay/sweep_driver.py"
 confidence = "requirement"
 rationale = "UninjectedRNGError in run_to_decision_boundary filters the candidate (return None + log once) instead of aborting the sweep: it means the branch diverged from observed reality. All-filtered still raises the no-candidate SimulationError."
 updated = "2026-07-11T17:34:34.784Z"
+
+[[record]]
+name = "hpbox_name_stops_at_lv"
+file = "liveplay/vision/ocr.py"
+confidence = "settled"
+rationale = "HP-box name pass must include the 'Lv' token and truncate the name at the first 'Lv': FONT_SMALL digit 0 == letter O pixel-exactly, so an alpha-only pass reads Lv10's 0 as a trailing O, splitting name-keyed HP logs (Allen1 sweep crash 2026-07-11)."
+updated = "2026-07-11T21:38:02.943Z"
