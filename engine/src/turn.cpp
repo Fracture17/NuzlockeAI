@@ -294,7 +294,9 @@ void cpp_run_one_turn(BattleState& state,
                       nlohmann::json* action_log,
                       const OracleOverrides* overrides,
                       const ActionSnapshot* resume_snap,
-                      const SpeedTieOrder* forced_tie) {
+                      const SpeedTieOrder* forced_tie,
+                      DamageLoopLuck* luck_p0_slot1,
+                      DamageLoopLuck* luck_p1_slot1) {
     // Plain mode: no snapshots, NeedsRNG propagates unchanged.
     // Oracle mode: per-action snapshot + NeedsRNG→TurnPause catch/restore.
     const bool oracle = (overrides != nullptr);
@@ -504,7 +506,12 @@ void cpp_run_one_turn(BattleState& state,
         // executes the stored VE_CHARGING_MOVE volatile directly (mirrors Python _advance_queue).
         if ((used_move == MV_METRONOME || used_move == MV_SLEEP_TALK)
                 && active.charging_move_slot != action.move_slot) {
-            DamageLoopLuck& mv_luck = (side_idx == 0) ? luck_p0 : luck_p1;
+            // Per-slot-1 attacker luck: when source_slot==1 and the slot-1 pointer is set, use it.
+            DamageLoopLuck* luck_p0_slot1_ptr = (source_slot == 1) ? luck_p0_slot1 : nullptr;
+            DamageLoopLuck* luck_p1_slot1_ptr = (source_slot == 1) ? luck_p1_slot1 : nullptr;
+            DamageLoopLuck& mv_luck = (side_idx == 0)
+                ? (luck_p0_slot1_ptr ? *luck_p0_slot1_ptr : luck_p0)
+                : (luck_p1_slot1_ptr ? *luck_p1_slot1_ptr : luck_p1);
 
             // Plain controlled mode: fail loud BEFORE building options (no else-random branch in
             // Python _phase_await_sub_move — sub_move in controlled mode is oracle-only).
@@ -593,7 +600,10 @@ void cpp_run_one_turn(BattleState& state,
             ctx.exp_participants = exp_participants;
             ctx.overrides = overrides;
 
-            DamageLoopLuck& luck_atk_sub = (side_idx == 0) ? luck_p0 : luck_p1;
+            // Per-slot-1 attacker luck selection for the sub-action execution.
+            DamageLoopLuck& luck_atk_sub = (side_idx == 0)
+                ? ((source_slot == 1 && luck_p0_slot1) ? *luck_p0_slot1 : luck_p0)
+                : ((source_slot == 1 && luck_p1_slot1) ? *luck_p1_slot1 : luck_p1);
             DamageLoopLuck& luck_def_sub = (side_idx == 0) ? luck_p1 : luck_p0;
 
             std::vector<PendingSwitch> pending_sub;
@@ -661,7 +671,11 @@ void cpp_run_one_turn(BattleState& state,
         ctx.exp_participants = exp_participants;
         ctx.overrides = overrides;
 
-        DamageLoopLuck& luck_atk = (side_idx == 0) ? luck_p0 : luck_p1;
+        // Per-slot-1 attacker luck selection: when source_slot==1 and the slot-1 pointer is set,
+        // use it as the attacker's damage-loop luck. Defender-side luck stays side-level.
+        DamageLoopLuck& luck_atk = (side_idx == 0)
+            ? ((source_slot == 1 && luck_p0_slot1) ? *luck_p0_slot1 : luck_p0)
+            : ((source_slot == 1 && luck_p1_slot1) ? *luck_p1_slot1 : luck_p1);
         DamageLoopLuck& luck_def = (side_idx == 0) ? luck_p1 : luck_p0;
 
         std::vector<PendingSwitch> pending_switches;

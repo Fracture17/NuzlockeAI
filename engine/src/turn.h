@@ -69,6 +69,10 @@ struct TurnPause {
 //   controlled cross-side MOVE speed tie is resolved by this ordering's rank instead of throwing
 //   NeedsRNG — sticky/re-fired for the whole turn (mirrors OLD sweep pre_rng_inject re-fire). No
 //   effect in oracle mode (overrides takes precedence) or when no tie occurs. nullptr = today.
+// luck_p0_slot1/luck_p1_slot1: optional per-slot-1 attacker damage-loop luck for doubles sweep
+//   replay. When non-null and the acting entry's source_slot==1 on that side, the slot-1 luck is
+//   used as the ATTACKER's damage-loop luck. Defender-side luck, residual/effects luck, and
+//   TurnLuck remain side-level. nullptr = use side-level luck (default, all existing behavior).
 void cpp_run_one_turn(BattleState& state,
                       const std::vector<ExecAction>& actions_p0,
                       const std::vector<ExecAction>& actions_p1,
@@ -80,6 +84,8 @@ void cpp_run_one_turn(BattleState& state,
                       nlohmann::json* action_log = nullptr,
                       const OracleOverrides* overrides = nullptr,
                       const ActionSnapshot* resume_snap = nullptr,
-                      const SpeedTieOrder* forced_tie = nullptr);
+                      const SpeedTieOrder* forced_tie = nullptr,
+                      DamageLoopLuck* luck_p0_slot1 = nullptr,
+                      DamageLoopLuck* luck_p1_slot1 = nullptr);
 
 #endif // NUZLOCKE_TURN_H

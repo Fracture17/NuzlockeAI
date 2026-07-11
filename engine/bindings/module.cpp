@@ -115,9 +115,24 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
                   forced_tie_ptr = &forced_tie;
               }
 
+              // luck_p0_slot1/luck_p1_slot1 (optional, doubles sweep replay): per-slot-1 attacker
+              // luck. When present, overrides the side-level attacker luck when source_slot==1.
+              // Absent → nullptr, side-level luck applies to all slots (all existing behavior).
+              DamageLoopLuck luck_p0_slot1_val, luck_p1_slot1_val;
+              DamageLoopLuck* luck_p0_slot1_ptr = nullptr;
+              DamageLoopLuck* luck_p1_slot1_ptr = nullptr;
+              if (j.contains("luck_p0_slot1") && !j["luck_p0_slot1"].is_null()) {
+                  luck_p0_slot1_val = damage_luck_from_json(j["luck_p0_slot1"]);
+                  luck_p0_slot1_ptr = &luck_p0_slot1_val;
+              }
+              if (j.contains("luck_p1_slot1") && !j["luck_p1_slot1"].is_null()) {
+                  luck_p1_slot1_val = damage_luck_from_json(j["luck_p1_slot1"]);
+                  luck_p1_slot1_ptr = &luck_p1_slot1_val;
+              }
+
               cpp_run_one_turn(s, a0, a1, luck_p0, luck_p1, tl0, tl1, mega_p0, mega_p1,
                                finalize_on_post_faint, nullptr, nullptr, nullptr, nullptr,
-                               forced_tie_ptr);
+                               forced_tie_ptr, luck_p0_slot1_ptr, luck_p1_slot1_ptr);
 
               nlohmann::json out;
               out["state"] = nlohmann::json::parse(battle_state_to_json(s));
@@ -129,6 +144,9 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
           "place instead of throwing, for the sweep replay layer. "
           "Optional speed_tie_order ([[side,slot],...]): force a controlled cross-side speed tie "
           "by this ordering instead of throwing NeedsRNG (sweep replay layer). "
+          "Optional luck_p0_slot1/luck_p1_slot1 (DamageLoopLuck dicts): per-slot-1 attacker luck "
+          "for doubles sweep replay. When present, overrides the side-level attacker luck when "
+          "source_slot==1. Absent/null → side-level luck for all slots. "
           "Pause boundaries raise RuntimeError(unported:).");
 
     // C1.7h Stage 1+4: post-faint switch primitive. JSON-in/JSON-out.
