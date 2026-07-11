@@ -637,7 +637,12 @@ void cpp_apply_switch_out_reset(BattleState& s, int side_idx, int old_idx) {
             mon.status = STATUS_NONE;
         if (mon.ability == AB_REGENERATOR) {
             int32_t heal = mon.max_hp / 3;
+            int32_t regen_before = mon.hp;
             mon.hp = std::min(mon.max_hp, mon.hp + heal);
+            // Mirror Python effects.py:472 log(HEAL, source="regenerator")
+            if (mon.hp > regen_before)
+                rich_log_heal(s.turn_number, mon.species, mon.hp - regen_before, mon.hp,
+                              side_idx, SourceTag::ABILITY);
         }
     }
     if (!side.imprisoned_moves.empty()) side.imprisoned_moves.clear();
@@ -1204,11 +1209,19 @@ static bool apply_recovery_move(BattleState& s, int side_idx, int32_t move, int 
         int32_t heal_amount = cpp_effective_stat(target, 1);
         PokemonState& user = active_mon(s, side_idx);
         if (target.ability == AB_LIQUID_OOZE) {
+            int32_t sap_ooze_before = user.hp;
             int32_t new_hp = std::max(0, user.hp - heal_amount);
             user.hp = new_hp;
+            // Mirror Python effects.py:995 log(DAMAGE, source="ability") Liquid Ooze on Strength Sap
+            rich_log_damage(s.turn_number, user.species, sap_ooze_before - new_hp, new_hp,
+                            RICH_UNSET, RICH_UNSET, side_idx, SourceTag::ABILITY);
             if (new_hp == 0) cpp_faint_active(s, side_idx, /*notify_soul_heart=*/false);
         } else {
+            int32_t sap_heal_before = user.hp;
             user.hp = std::min(user.max_hp, user.hp + heal_amount);
+            // Mirror Python effects.py:1003 log(HEAL, source="move") Strength Sap heal
+            rich_log_heal(s.turn_number, user.species, user.hp - sap_heal_before, user.hp,
+                          side_idx, SourceTag::MOVE);
         }
         change_stat_stage(s, opp_idx, 0, -1, false, false, false);
         return true;
@@ -1232,7 +1245,11 @@ static bool apply_recovery_move(BattleState& s, int side_idx, int32_t move, int 
         } else {
             heal = mon.max_hp / 2;
         }
+        int32_t rec_before = mon.hp;
         mon.hp = std::min(mon.max_hp, mon.hp + heal);
+        // Mirror Python effects.py:1031 log(HEAL, source="move") recovery move heal
+        rich_log_heal(s.turn_number, mon.species, mon.hp - rec_before, mon.hp,
+                      side_idx, SourceTag::MOVE);
 
         // Roost: drop Flying type for the turn (restored at EOT via VE_ROOST timer).
         if (move == MOVE_ROOST && has_type(mon, TYPE_FLYING)) {
@@ -1256,7 +1273,11 @@ static bool apply_recovery_move(BattleState& s, int side_idx, int32_t move, int 
         if (mon.hp >= mon.max_hp) { mon.last_move_failed = true; return true; }
         int32_t denom = (mon.stockpile_count == 1) ? 4 : (mon.stockpile_count == 2) ? 2 : 1;
         int32_t heal = mon.max_hp / denom;
+        int32_t sw_before = mon.hp;
         mon.hp = std::min(mon.max_hp, mon.hp + heal);
+        // Mirror Python effects.py:1059 log(HEAL, source="move") Swallow heal
+        rich_log_heal(s.turn_number, mon.species, mon.hp - sw_before, mon.hp,
+                      side_idx, SourceTag::MOVE);
         reset_stockpile(s, side_idx);
         return true;
     }

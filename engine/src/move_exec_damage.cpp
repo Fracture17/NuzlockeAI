@@ -254,8 +254,12 @@ void apply_defender_faint_effects(BattleState& state, int side_idx, int defender
     if (updated_def_ability == AB_INNARDS_OUT) {
         PokemonState& attacker = active_mon(state, side_idx);
         if (!attacker.fainted && attacker.ability != AB_MAGIC_GUARD) {
+            int32_t innards_before = attacker.hp;
             int32_t new_hp = std::max(0, attacker.hp - hp_before);
             attacker.hp = new_hp;
+            // Mirror Python core.py:1094 log(DAMAGE, source="ability", source_detail="innards_out")
+            rich_log_damage(state.turn_number, attacker.species, innards_before - new_hp, new_hp,
+                            RICH_UNSET, RICH_UNSET, side_idx, SourceTag::ABILITY);
             if (new_hp == 0) cpp_faint_active(state, side_idx, /*notify_soul_heart=*/false);
         }
     }
@@ -615,11 +619,20 @@ LoopResult handle_damage_loop(BattleState& state, int side_idx, int defender_idx
             if (drain_atk.item == ITM_BIG_ROOT) drain_heal = (int)(drain_heal * 1.3);
             if (!drain_atk.fainted) {
                 if (drain_def.ability == AB_LIQUID_OOZE) {
+                    int32_t drain_ooze_before = drain_atk.hp;
                     int32_t new_hp = std::max(0, drain_atk.hp - drain_heal);
                     drain_atk.hp = new_hp;
+                    // Mirror Python core.py:1406 log(DAMAGE, source="ability") Liquid Ooze drain
+                    rich_log_damage(state.turn_number, drain_atk.species, drain_ooze_before - new_hp,
+                                    new_hp, RICH_UNSET, RICH_UNSET, side_idx, SourceTag::ABILITY);
                     if (new_hp == 0) cpp_faint_active(state, side_idx, /*notify_soul_heart=*/false);
                 } else {
+                    int32_t drain_heal_before = drain_atk.hp;
                     drain_atk.hp = std::min(drain_atk.max_hp, drain_atk.hp + drain_heal);
+                    // Mirror Python core.py:1416 log(HEAL, source="drain_move")
+                    rich_log_heal(state.turn_number, drain_atk.species,
+                                  drain_atk.hp - drain_heal_before, drain_atk.hp,
+                                  side_idx, SourceTag::MOVE);
                 }
             }
         }
@@ -633,8 +646,12 @@ LoopResult handle_damage_loop(BattleState& state, int side_idx, int defender_idx
                     && (updated_def_ability == AB_ROUGH_SKIN || updated_def_ability == AB_IRON_BARBS)
                     && !rs_atk.fainted) {
                 int32_t recoil = std::max(1, rs_atk.max_hp / 8);
+                int32_t rs_before = rs_atk.hp;
                 int32_t new_hp = std::max(0, rs_atk.hp - recoil);
                 rs_atk.hp = new_hp;
+                // Mirror Python core.py:1436 log(DAMAGE, source="ability") Rough Skin/Iron Barbs
+                rich_log_damage(state.turn_number, rs_atk.species, rs_before - new_hp, new_hp,
+                                RICH_UNSET, RICH_UNSET, side_idx, SourceTag::ABILITY);
                 if (new_hp == 0) cpp_faint_active(state, side_idx, /*notify_soul_heart=*/false);
             }
         }

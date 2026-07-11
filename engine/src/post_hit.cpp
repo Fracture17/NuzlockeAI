@@ -958,7 +958,11 @@ void cpp_apply_post_hit_effects(BattleState& s, const PostHitArgs& a,
         PokemonState& atk2 = active_mon(s, si);
         if (atk2.item == I_SHELL_BELL && !atk2.fainted && actual_damage > 0 && !magic_room) {
             int32_t heal = std::max(1, actual_damage / 8);
+            int32_t sb_hp_before = atk2.hp;
             atk2.hp = std::min(atk2.max_hp, atk2.hp + heal);
+            // Mirror Python post_hit.py:942 log(HEAL, source="item") Shell Bell heal
+            rich_log_heal(s.turn_number, atk2.species, atk2.hp - sb_hp_before, atk2.hp,
+                          si, SourceTag::ITEM);
         }
     }
 }

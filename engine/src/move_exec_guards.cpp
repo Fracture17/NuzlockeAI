@@ -362,8 +362,13 @@ bool check_type_immunity(BattleState& state, int attacker_side_idx, int32_t move
 
     auto apply_heal = [&]() {
         PokemonState& cur = active_mon(state, def_side_idx);
+        int32_t absorb_before = cur.hp;
         int32_t healed = std::min(cur.max_hp, cur.hp + cur.max_hp / 4);
         cur.hp = healed;
+        // Mirror Python core.py:891 log(HEAL) absorb ability heal (Water/Volt/Earth Eater/Dry Skin absorb)
+        if (healed > absorb_before)
+            rich_log_heal(state.turn_number, cur.species, healed - absorb_before, healed,
+                          def_side_idx, SourceTag::ABILITY);
     };
     auto apply_boost = [&](int stat_idx) {
         change_stat_stage(state, def_side_idx, stat_idx, +1, /*caused_by_opp*/false,
@@ -701,8 +706,12 @@ bool pdg_accuracy_and_miss(BattleState& state, int side_idx, int defender_idx, i
         PokemonState& a = active_mon(state, side_idx);
         if (is_hjk(move) && !a.fainted && a.ability != AB_MAGIC_GUARD) {
             int32_t crash = std::max(1, a.max_hp / 2);
+            int32_t crash_before = a.hp;
             int32_t new_hp = std::max(0, a.hp - crash);
             a.hp = new_hp;
+            // Mirror Python core.py:2085 log(DAMAGE, source="crash") HJK crash damage
+            rich_log_damage(state.turn_number, a.species, crash_before - new_hp, new_hp,
+                            RICH_UNSET, RICH_UNSET, side_idx, SourceTag::RECOIL);
             if (new_hp == 0) cpp_faint_active(state, side_idx, false, 0);
         }
     }
@@ -864,6 +873,10 @@ bool pdg_ability_item_immunity_guards(BattleState& state, int side_idx, int defe
 
     if (defender.ability == AB_ICE_FACE && defender.species == SP_EISCUE
             && md.category == CAT_PHYSICAL && !is_mold_breaker(attacker.ability)) {
+        // Mirror Python core.py:2265 log(DAMAGE, amount=0, source="ability", source_detail="ice_face")
+        // amount=0 is corroboration-inert (_sim_hp_changes skips it) but ported for parity.
+        rich_log_damage(state.turn_number, defender.species, 0, defender.hp,
+                        RICH_UNSET, RICH_UNSET, defender_idx, SourceTag::ABILITY);
         apply_form_change(state, defender_idx, SP_EISCUE_NOICE);
         return true;
     }

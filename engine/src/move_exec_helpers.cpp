@@ -175,9 +175,13 @@ void cpp_apply_rocky_helmet(BattleState& state, int side_idx, int defender_idx,
         && !attacker.fainted
         && attacker.ability != AB_MAGIC_GUARD) {
         int32_t recoil = std::max(1, attacker.max_hp / 6);
+        int32_t rh_before = attacker.hp;
         int32_t new_hp = std::max(0, attacker.hp - recoil);
         attacker.hp = new_hp;
         attacker.has_hp = true;
+        // Mirror Python _helpers.py:363 log(DAMAGE, source="item") Rocky Helmet recoil
+        rich_log_damage(state.turn_number, attacker.species, rh_before - new_hp, new_hp,
+                        RICH_UNSET, RICH_UNSET, side_idx, SourceTag::ITEM);
         if (new_hp == 0) {
             // Mirror Python's _apply_rocky_helmet -> faint_active: route the faint through the
             // canonical transition so traps the attacker was inflicting get released.
@@ -196,11 +200,20 @@ void cpp_apply_gulp_missile_projectile(BattleState& state, int defender_idx, int
     PokemonState& attacker = active_mon(state, attacker_idx);
     if (!attacker.fainted) {
         int32_t proj_dmg = attacker.max_hp / 4;
+        int32_t gulp_hp_before = attacker.hp;
         int32_t new_hp = std::max(0, attacker.hp - proj_dmg);
         bool fainted = new_hp == 0;
         attacker.hp = new_hp;
         attacker.has_hp = true;
         attacker.fainted = fainted;
+        // Mirror Python core.py:563 log(DAMAGE, source="ability") Gulp Missile projectile
+        rich_log_damage(state.turn_number, attacker.species, gulp_hp_before - new_hp, new_hp,
+                        RICH_UNSET, RICH_UNSET, attacker_idx, SourceTag::ABILITY);
+        if (fainted) {
+            rich_log_faint(state.turn_number, attacker.species, attacker_idx);
+            cpp_release_inflicted_traps(state, attacker_idx,
+                                        side_at(state, attacker_idx).active_indices[0]);
+        }
         if (def_species == SP_CRAMORANT_GULPING) {
             change_stat_stage(state, attacker_idx, 1, -1, /*caused_by_opponent*/true, false, false);
         } else if (!fainted) {

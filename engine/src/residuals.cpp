@@ -104,26 +104,58 @@ bool band_weather(BattleState& s, int si, int active_idx, int32_t weather) {
     if (weather == WEATHER_SANDSTORM) {
         if (!has_any_type(p, {TYPE_ROCK, TYPE_STEEL, 8 /*GROUND*/})
             && !sandstorm_immune_ability(p.ability)
-            && p.ability != AB_MAGIC_GUARD && p.item != I_SAFETY_GOGGLES)
+            && p.ability != AB_MAGIC_GUARD && p.item != I_SAFETY_GOGGLES) {
+            int32_t dmg_before = p.hp;
             p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 16));
+            // Mirror Python residuals.py:75 log(DAMAGE, source="residual_weather")
+            rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                            RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
+        }
     } else if (weather == WEATHER_HAIL) {
         if (p.ability == AB_ICE_BODY) {
+            int32_t heal_before = p.hp;
             p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 16));
+            // Mirror Python residuals.py:83 log(HEAL, source="ice_body")
+            if (p.hp > heal_before)
+                rich_log_heal(s.turn_number, p.species, p.hp - heal_before, p.hp,
+                              si, SourceTag::RESIDUAL);
         } else if (!has_type(p, TYPE_ICE) && !hail_immune_ability(p.ability)
                    && p.ability != AB_MAGIC_GUARD && p.item != I_SAFETY_GOGGLES) {
+            int32_t dmg_before = p.hp;
             p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 16));
+            // Mirror Python residuals.py:91 log(DAMAGE, source="residual_weather")
+            rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                            RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
         }
     }
     if (p.ability == AB_RAIN_DISH && (weather == WEATHER_RAINY || weather == WEATHER_HEAVY_RAIN)) {
+        int32_t heal_before = p.hp;
         p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 16));
+        // Mirror Python residuals.py:99 log(HEAL, source="rain_dish")
+        rich_log_heal(s.turn_number, p.species, p.hp - heal_before, p.hp,
+                      si, SourceTag::RESIDUAL);
     } else if (p.ability == AB_DRY_SKIN) {
-        if (weather == WEATHER_RAINY || weather == WEATHER_HEAVY_RAIN)
+        if (weather == WEATHER_RAINY || weather == WEATHER_HEAVY_RAIN) {
+            int32_t heal_before = p.hp;
             p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 8));
-        else if (weather == WEATHER_SUNNY || weather == WEATHER_HARSH_SUN)
+            // Mirror Python residuals.py:105 log(HEAL, source="dry_skin")
+            rich_log_heal(s.turn_number, p.species, p.hp - heal_before, p.hp,
+                          si, SourceTag::RESIDUAL);
+        } else if (weather == WEATHER_SUNNY || weather == WEATHER_HARSH_SUN) {
+            int32_t dmg_before = p.hp;
             p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 8));
+            // Mirror Python residuals.py:110 log(DAMAGE, source="residual_dry_skin")
+            rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                            RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
+        }
     }
-    if (p.ability == AB_SOLAR_POWER && (weather == WEATHER_SUNNY || weather == WEATHER_HARSH_SUN))
+    if (p.ability == AB_SOLAR_POWER && (weather == WEATHER_SUNNY || weather == WEATHER_HARSH_SUN)) {
+        int32_t dmg_before = p.hp;
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 8));
+        // Mirror Python residuals.py:116 log(DAMAGE, source="residual_solar_power")
+        rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                        RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
+    }
 
     if (p.hp == 0) {
         rich_log_faint(s.turn_number, p.species, si);
@@ -138,8 +170,14 @@ bool band_weather(BattleState& s, int si, int active_idx, int32_t weather) {
 // Band 5.1: Grassy Terrain heal.
 bool band_grassy_terrain(BattleState& s, int si, int active_idx) {
     PokemonState& p = side_at(s, si).team[active_idx];
-    if (s.terrain == TERRAIN_GRASSY && is_grounded(p, s))
+    if (s.terrain == TERRAIN_GRASSY && is_grounded(p, s)) {
+        int32_t heal_before = p.hp;
         p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 16));
+        // Mirror Python residuals.py:133 log(HEAL, source="grassy_terrain")
+        if (p.hp > heal_before)
+            rich_log_heal(s.turn_number, p.species, p.hp - heal_before, p.hp,
+                          si, SourceTag::RESIDUAL);
+    }
     return false;
 }
 
@@ -177,13 +215,27 @@ bool band_item_heal(BattleState& s, int si, int active_idx) {
     PokemonState& p = side_at(s, si).team[active_idx];
     if (p.item == I_LEFTOVERS) {
         if (p.ability == AB_KLUTZ || has_magic_room(s)) {}
-        else p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 16));
+        else {
+            int32_t heal_before = p.hp;
+            p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 16));
+            // Mirror Python residuals.py:177 log(HEAL, source="leftovers")
+            rich_log_heal(s.turn_number, p.species, p.hp - heal_before, p.hp,
+                          si, SourceTag::RESIDUAL);
+        }
     } else if (p.item == I_BLACK_SLUDGE) {
         if (p.ability == AB_KLUTZ || has_magic_room(s)) {}
-        else if (has_type(p, TYPE_POISON))
+        else if (has_type(p, TYPE_POISON)) {
+            int32_t heal_before = p.hp;
             p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 16));
-        else {
+            // Mirror Python residuals.py:187 log(HEAL, source="black_sludge")
+            rich_log_heal(s.turn_number, p.species, p.hp - heal_before, p.hp,
+                          si, SourceTag::RESIDUAL);
+        } else {
+            int32_t dmg_before = p.hp;
             p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 8));
+            // Mirror Python residuals.py:192 log(DAMAGE, source="residual_black_sludge")
+            rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                            RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
             if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
         }
     }
@@ -193,12 +245,24 @@ bool band_item_heal(BattleState& s, int si, int active_idx) {
 // Band 6/7: Aqua Ring / Ingrain heal.
 bool band_aqua_ring(BattleState& s, int si, int active_idx) {
     PokemonState& p = side_at(s, si).team[active_idx];
-    if (p.volatiles & VOL_AQUA_RING) p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 16));
+    if (p.volatiles & VOL_AQUA_RING) {
+        int32_t heal_before = p.hp;
+        p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 16));
+        // Mirror Python residuals.py:208 log(HEAL, source="aqua_ring")
+        rich_log_heal(s.turn_number, p.species, p.hp - heal_before, p.hp,
+                      si, SourceTag::RESIDUAL);
+    }
     return false;
 }
 bool band_ingrain(BattleState& s, int si, int active_idx) {
     PokemonState& p = side_at(s, si).team[active_idx];
-    if (p.volatiles & VOL_INGRAIN) p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 16));
+    if (p.volatiles & VOL_INGRAIN) {
+        int32_t heal_before = p.hp;
+        p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 16));
+        // Mirror Python residuals.py:219 log(HEAL, source="ingrain")
+        rich_log_heal(s.turn_number, p.species, p.hp - heal_before, p.hp,
+                      si, SourceTag::RESIDUAL);
+    }
     return false;
 }
 
@@ -210,7 +274,11 @@ bool band_leech_seed(BattleState& s, int si, int active_idx, int opp_idx) {
     if (p.ability == AB_MAGIC_GUARD) return false;
     int32_t drain = std::max(1, p.max_hp / 8);
     drain = std::min(drain, p.hp);
+    int32_t dmg_before = p.hp;
     p.hp = std::max(0, p.hp - drain);
+    // Mirror Python residuals.py:235 log(DAMAGE, source="residual_leech_seed")
+    rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                    RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
 
     SideState& opp_side = side_at(s, opp_idx);
     int32_t seed_slot;
@@ -226,10 +294,18 @@ bool band_leech_seed(BattleState& s, int si, int active_idx, int opp_idx) {
     PokemonState& opp = opp_side.team[opp_active_idx];
     if (!opp.fainted) {
         if (p.ability == AB_LIQUID_OOZE_R) {
+            int32_t opp_dmg_before = opp.hp;
             opp.hp = std::max(0, opp.hp - drain);
+            // Mirror Python effects.py:995 log(DAMAGE, source="ability") (Liquid Ooze on Leech Seed)
+            rich_log_damage(s.turn_number, opp.species, opp_dmg_before - opp.hp, opp.hp,
+                            RICH_UNSET, RICH_UNSET, opp_idx, SourceTag::ABILITY);
         } else {
             int32_t heal = (opp.item == I_BIG_ROOT) ? (int32_t)(drain * 1.3) : drain;
+            int32_t opp_heal_before = opp.hp;
             opp.hp = std::min(opp.max_hp, opp.hp + heal);
+            // Mirror Python residuals.py:262 log(HEAL, source="leech_seed")
+            rich_log_heal(s.turn_number, opp.species, opp.hp - opp_heal_before, opp.hp,
+                          opp_idx, SourceTag::RESIDUAL);
         }
     }
     if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
@@ -240,13 +316,25 @@ bool band_leech_seed(BattleState& s, int si, int active_idx, int opp_idx) {
 bool band_poison(BattleState& s, int si, int active_idx, int opp_idx, const ResidualLuck& L) {
     PokemonState& p = side_at(s, si).team[active_idx];
     if (p.ability == AB_POISON_HEAL && (p.status == STATUS_POISON || p.status == STATUS_TOXIC)) {
+        int32_t heal_before = p.hp;
         p.hp = std::min(p.max_hp, p.hp + std::max(1, p.max_hp / 8));
+        // Mirror Python residuals.py:277 log(HEAL, source="poison_heal")
+        rich_log_heal(s.turn_number, p.species, p.hp - heal_before, p.hp,
+                      si, SourceTag::RESIDUAL);
     } else if (p.status == STATUS_TOXIC && p.ability != AB_MAGIC_GUARD) {
         int32_t dmg = std::max(1, (int32_t)((long long)p.max_hp * p.toxic_turns / 16));
+        int32_t dmg_before = p.hp;
         p.hp = std::max(0, p.hp - dmg);
         p.toxic_turns = std::min(p.toxic_turns + 1, 15);
+        // Mirror Python residuals.py:283 log(DAMAGE, source="residual_toxic")
+        rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                        RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
     } else if (p.status == STATUS_POISON && p.ability != AB_MAGIC_GUARD) {
+        int32_t dmg_before = p.hp;
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 8));
+        // Mirror Python residuals.py:291 log(DAMAGE, source="residual_poison")
+        rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                        RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
     }
     if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
     check_berry(s, si, opp_idx, luck_for(L, si).rng, luck_for(L, si).overrides);
@@ -258,7 +346,11 @@ bool band_burn(BattleState& s, int si, int active_idx, int opp_idx, const Residu
     PokemonState& p = side_at(s, si).team[active_idx];
     if (p.status == STATUS_BURN && p.ability != AB_MAGIC_GUARD) {
         int32_t divisor = (p.ability == AB_HEATPROOF) ? 32 : 16;
+        int32_t dmg_before = p.hp;
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / divisor));
+        // Mirror Python residuals.py:313 log(DAMAGE, source="residual_burn")
+        rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                        RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
     }
     if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
     check_berry(s, si, opp_idx, luck_for(L, si).rng, luck_for(L, si).overrides);
@@ -327,6 +419,9 @@ bool band_late(BattleState& s, int si, int active_idx, int opp_idx, int32_t weat
         int32_t dmg = std::max(1, opp.max_hp / 8);
         int32_t nh = std::max(0, opp.hp - dmg);
         opp.hp = nh;
+        // Mirror Python residuals.py:379 log(DAMAGE, source="residual_bad_dreams")
+        rich_log_damage(s.turn_number, opp.species, dmg, nh,
+                        RICH_UNSET, RICH_UNSET, opp_idx, SourceTag::RESIDUAL);
         opp.fainted = (nh == 0);
         if (nh == 0) {
             rich_log_faint(s.turn_number, opp.species, opp_idx);
@@ -361,7 +456,11 @@ bool band_late_damage(BattleState& s, int si, int active_idx, int opp_idx, const
     PokemonState& p = side.team[active_idx];
 
     if (p.item == I_STICKY_BARB && p.ability != AB_MAGIC_GUARD) {
+        int32_t dmg_before = p.hp;
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 8));
+        // Mirror Python residuals.py:411 log(DAMAGE, source="residual_sticky_barb")
+        rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                        RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
         if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; notify_faint_soul_heart(s); cpp_release_inflicted_traps(s, si, active_idx); return true; }
     }
     if (has_ve(p, VE_OCTOLOCK)) {
@@ -369,7 +468,11 @@ bool band_late_damage(BattleState& s, int si, int active_idx, int opp_idx, const
         change_stat_stage(s, si, 3, -1, false, false, false);
     }
     if (has_ve(p, VE_NIGHTMARE) && p.status == STATUS_SLEEP && p.ability != AB_MAGIC_GUARD) {
+        int32_t dmg_before = p.hp;
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 4));
+        // Mirror Python residuals.py:432 log(DAMAGE, source="residual_nightmare")
+        rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                        RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
         if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
     }
     if (has_ve(p, VE_NIGHTMARE) && p.status != STATUS_SLEEP) {
@@ -378,7 +481,11 @@ bool band_late_damage(BattleState& s, int si, int active_idx, int opp_idx, const
         p.timed_volatiles.assign_from(kept);
     }
     if ((p.volatiles & VOL_CURSED) && p.ability != AB_MAGIC_GUARD) {
+        int32_t dmg_before = p.hp;
         p.hp = std::max(0, p.hp - std::max(1, p.max_hp / 4));
+        // Mirror Python residuals.py:454 log(DAMAGE, source="residual_curse")
+        rich_log_damage(s.turn_number, p.species, dmg_before - p.hp, p.hp,
+                        RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
         if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
     }
 
@@ -402,7 +509,11 @@ bool band_late_damage(BattleState& s, int si, int active_idx, int opp_idx, const
             opp_active = &opp_side.team[opp_side.active_indices[0]];
         int32_t bound_dmg = (opp_active->item == I_BINDING_BAND)
             ? std::max(1, p.max_hp / 6) : std::max(1, p.max_hp / 8);
+        int32_t bound_dmg_before = p.hp;
         p.hp = std::max(0, p.hp - bound_dmg);
+        // Mirror Python residuals.py:497 log(DAMAGE, source="residual_bound")
+        rich_log_damage(s.turn_number, p.species, bound_dmg_before - p.hp, p.hp,
+                        RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
         if (p.hp == 0) { rich_log_faint(s.turn_number, p.species, si); p.fainted = true; cpp_release_inflicted_traps(s, si, active_idx); return true; }
     }
 
@@ -522,7 +633,12 @@ void apply_damage_fs(BattleState& s, int defender_idx, int damage,
     bool fainted = (new_hp == 0);
     bool new_took = d.took_damage_this_turn || (actual_taken > 0);
     d.hp = new_hp; d.fainted = fainted; d.item = new_item; d.took_damage_this_turn = new_took;
-    if (fainted) cpp_release_inflicted_traps(s, defender_idx, side_at(s, defender_idx).active_indices[0]);
+    if (fainted) {
+        // cpp_faint_active is idempotent but hp/fainted are already set; fire faint observation
+        // and release traps (mirrors cpp_apply_damage -> cpp_release_inflicted_traps path).
+        rich_log_faint(s.turn_number, d.species, defender_idx);
+        cpp_release_inflicted_traps(s, defender_idx, side_at(s, defender_idx).active_indices[0]);
+    }
     if (!fainted) check_berry(s, defender_idx, opp_side_idx, luck.rng, luck.overrides);
 }
 
@@ -668,7 +784,14 @@ void cpp_apply_residuals(BattleState& s, const ResidualLuck& L, const ResidualCt
                 int actual_pos = std::min((int)side.wish_slot, (int)side.active_indices.size() - 1);
                 int32_t rid = side.active_indices[actual_pos];
                 PokemonState& r = side.team[rid];
-                if (!r.fainted) r.hp = std::min(r.max_hp, r.hp + side.wish_hp);
+                if (!r.fainted) {
+                    int32_t wish_heal_before = r.hp;
+                    r.hp = std::min(r.max_hp, r.hp + side.wish_hp);
+                    // Mirror Python residuals.py:811 log(HEAL, source="wish")
+                    if (r.hp > wish_heal_before)
+                        rich_log_heal(s.turn_number, r.species, r.hp - wish_heal_before, r.hp,
+                                      si, SourceTag::RESIDUAL);
+                }
                 side.has_wish_pending = false;
                 side.wish_turns = side.wish_hp = side.wish_slot = 0;
             } else {
@@ -686,10 +809,16 @@ void cpp_apply_residuals(BattleState& s, const ResidualLuck& L, const ResidualCt
                 int actual_pos = std::min((int)side.fs_target_slot, (int)side.active_indices.size() - 1);
                 int32_t rid = side.active_indices[actual_pos];
                 if (!side.team[rid].fainted) {
+                    int32_t fs_hp_before = side.team[rid].hp;
+                    int32_t fs_species = side.team[rid].species;
                     int32_t saved = side.active_indices[0];
                     side.active_indices[0] = rid;
                     apply_damage_fs(s, si, side.fs_damage, luck_for(L, si), 1 - si);
                     side.active_indices[0] = saved;
+                    // Mirror Python residuals.py:834 log(DAMAGE, source="future_sight")
+                    int32_t fs_hp_after = side.team[rid].hp;
+                    rich_log_damage(s.turn_number, fs_species, fs_hp_before - fs_hp_after,
+                                    fs_hp_after, RICH_UNSET, RICH_UNSET, si, SourceTag::RESIDUAL);
                 }
                 side.has_future_sight_pending = false;
                 side.fs_turns = side.fs_damage = side.fs_move = side.fs_target_slot = 0;
