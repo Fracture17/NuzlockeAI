@@ -11,11 +11,13 @@ from liveplay.data.species import Species
 from liveplay.state.side import SideCondition
 from tests.state_builders import (
     make_mon, make_battle, make_doubles_battle,
-    slot, switch_to, active,
+    slot, switch_to, active, assert_status,
 )
+from liveplay.data.status import Status
 from liveplay.sweep_driver import (
     SideOverrides, SweepConfig, SweepLuck,
     build_sweep_luck, build_speed_tie_order,
+    pre_inject_payload,
     run_to_decision_boundary, run_with_capture,
     has_fainted_active, reset_seen_errors,
     _sum_damage, _total_side_move_damage, _per_hit_damages,
@@ -280,8 +282,10 @@ class TestBuildSweepLuckExtraOverrides:
         with pytest.raises(ValueError):
             build_sweep_luck(self._config({RNGEvent.METRONOME_MOVE: 1}))
 
-    def test_nonempty_extra_pre_inject_raises(self):
-        with pytest.raises(NotImplementedError):
+    def test_nonempty_extra_pre_inject_no_longer_raises_not_implemented(self):
+        # SPEED_TIE in extra_pre_inject is a caller bug → ValueError from pre_inject_payload,
+        # but build_sweep_luck no longer raises NotImplementedError for non-empty extra_pre_inject.
+        with pytest.raises(ValueError, match="SPEED_TIE"):
             build_sweep_luck(SweepConfig(extra_pre_inject={RNGEvent.SPEED_TIE: 0}))
 
 
@@ -656,3 +660,133 @@ class TestSpeedTieEndToEnd:
         assert result is not None
         assert not active(result, 1).fainted
         assert active(result, 0).fainted
+
+
+# ---------------------------------------------------------------------------
+# pre_inject_payload unit tests (E2 Task 6d)
+# ---------------------------------------------------------------------------
+
+class TestPreInjectPayload:
+    """Unit tests for pre_inject_payload: RNGEvent → (name_str, int) conversion."""
+
+    # --- six supported events, one per test ---
+
+    def test_metronome_move_converts(self):
+        result = pre_inject_payload({RNGEvent.METRONOME_MOVE: Move.POUND})
+        assert result == {"METRONOME_MOVE": int(Move.POUND)}
+
+    def test_sleep_talk_move_converts(self):
+        result = pre_inject_payload({RNGEvent.SLEEP_TALK_MOVE: Move.TACKLE})
+        assert result == {"SLEEP_TALK_MOVE": int(Move.TACKLE)}
+
+    def test_effect_spore_which_converts(self):
+        result = pre_inject_payload({RNGEvent.EFFECT_SPORE_WHICH: Status.SLEEP})
+        assert result == {"EFFECT_SPORE_WHICH": int(Status.SLEEP)}
+
+    def test_acupressure_stat_converts(self):
+        result = pre_inject_payload({RNGEvent.ACUPRESSURE_STAT: 3})
+        assert result == {"ACUPRESSURE_STAT": 3}
+
+    def test_roar_target_converts(self):
+        result = pre_inject_payload({RNGEvent.ROAR_TARGET: 2})
+        assert result == {"ROAR_TARGET": 2}
+
+    def test_tri_attack_status_converts(self):
+        result = pre_inject_payload({RNGEvent.TRI_ATTACK_STATUS: Status.BURN})
+        assert result == {"TRI_ATTACK_STATUS": int(Status.BURN)}
+
+    # --- empty / None ---
+
+    def test_none_returns_none(self):
+        assert pre_inject_payload(None) is None
+
+    def test_empty_dict_returns_none(self):
+        assert pre_inject_payload({}) is None
+
+    # --- error cases ---
+
+    def test_moody_stats_raises(self):
+        with pytest.raises(ValueError, match="MOODY_STATS"):
+            pre_inject_payload({RNGEvent.MOODY_STATS: 0})
+
+    def test_speed_tie_raises(self):
+        with pytest.raises(ValueError, match="SPEED_TIE"):
+            pre_inject_payload({RNGEvent.SPEED_TIE: 0})
+
+    def test_wrong_type_for_move_event_raises(self):
+        # METRONOME_MOVE expects a Move enum; an int is accepted (pass-through); Status is wrong.
+        with pytest.raises(ValueError):
+            pre_inject_payload({RNGEvent.METRONOME_MOVE: Status.BURN})
+
+    def test_wrong_type_for_status_event_raises(self):
+        # TRI_ATTACK_STATUS expects a Status enum; a raw int (wrong type) should raise.
+        with pytest.raises(ValueError):
+            pre_inject_payload({RNGEvent.TRI_ATTACK_STATUS: Move.TACKLE})
+
+    def test_multiple_events_converts_all(self):
+        result = pre_inject_payload({
+            RNGEvent.METRONOME_MOVE: Move.POUND,
+            RNGEvent.ACUPRESSURE_STAT: 2,
+        })
+        assert result == {"METRONOME_MOVE": int(Move.POUND), "ACUPRESSURE_STAT": 2}
+
+
+# ---------------------------------------------------------------------------
+# ANCIENT_POWER_BOOST message update (E2 Task 6d)
+# ---------------------------------------------------------------------------
+
+class TestAncientPowerBoostMessage:
+    """ANCIENT_POWER_BOOST still raises ValueError; message confirms dead in BOTH engines."""
+
+    def test_ancient_power_boost_message_mentions_both_engines(self):
+        with pytest.raises(ValueError, match="ANCIENT_POWER_BOOST") as exc_info:
+            build_sweep_luck(
+                SweepConfig(side0=SideOverrides(extra_overrides={RNGEvent.ANCIENT_POWER_BOOST: True}))
+            )
+        msg = str(exc_info.value)
+        # Updated message should mention it's dead in both engines (not just C++)
+        assert "both" in msg.lower() or "python" in msg.lower() or "engines" in msg.lower(), (
+            f"Expected message to mention both engines being dead, got: {msg!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: extra_pre_inject via SweepConfig (E2 Task 6d)
+# ---------------------------------------------------------------------------
+
+class TestExtraPreInjectEndToEnd:
+    """SweepConfig.extra_pre_inject flows through run_to_decision_boundary into C++."""
+
+    def _tri_attack_battle(self):
+        # Porygon uses Tri Attack (secondary fires with proc_threshold=0.0);
+        # Snorlax is the target (bulky enough to survive one hit).
+        from liveplay.rng import LuckProfile
+        atk = make_mon(Species.PORYGON, moves=(Move.TRI_ATTACK,), level=50)
+        target = make_mon(Species.SNORLAX, moves=(Move.SPLASH,), level=50)
+        return make_battle(atk, target)
+
+    def test_tri_attack_burn_via_sweep_config(self):
+        """extra_pre_inject TRI_ATTACK_STATUS=BURN flows end-to-end; defender ends up burned."""
+        state = self._tri_attack_battle()
+        config = SweepConfig(
+            # Force secondary to fire: secondary_threshold=0.0 on attacker's side
+            side0=SideOverrides(extra_overrides={RNGEvent.SECONDARY_FIRES: True}),
+            extra_pre_inject={RNGEvent.TRI_ATTACK_STATUS: Status.BURN},
+        )
+        result = run_to_decision_boundary(state, slot(0), slot(0), config)
+        assert result is not None
+        assert_status(result, 1, Status.BURN)
+
+    def test_tri_attack_burn_via_run_with_capture(self):
+        """Same injection via run_with_capture; defender burned, events captured."""
+        state = self._tri_attack_battle()
+        config = SweepConfig(
+            side0=SideOverrides(extra_overrides={RNGEvent.SECONDARY_FIRES: True}),
+            extra_pre_inject={RNGEvent.TRI_ATTACK_STATUS: Status.BURN},
+        )
+        result, capture = run_with_capture(state, slot(0), slot(0), config)
+        assert result is not None
+        assert_status(result, 1, Status.BURN)
+        # Events should be populated (at least DAMAGE and MOVE_USE)
+        assert capture.fired(LogEvent.DAMAGE)
+        assert capture.fired(LogEvent.MOVE_USE)

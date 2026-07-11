@@ -7,11 +7,13 @@ import dataclasses
 import sys
 import traceback
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Mapping, Optional
 
 from liveplay.actions import Action
 import liveplay.cpp_driver as _cpp_driver
 from liveplay.cpp_driver import UnportedTurn
+from liveplay.data.moves import Move
+from liveplay.data.status import Status
 from liveplay.logger import CapturingLogger, LogEvent
 from liveplay.rng import LuckProfile, RNGEvent, SWEEP_LUCK
 from liveplay.state.battle import BattleState
@@ -35,7 +37,7 @@ class SideOverrides:
 class SweepConfig:
     """Full configuration for one sweep trial."""
     tie_winner: int = 0
-    extra_pre_inject: Optional[dict] = None        # MUST be None/empty, else NotImplementedError
+    extra_pre_inject: Optional[dict] = None        # RNGEvent → Python-typed value; converted by pre_inject_payload
     side0: SideOverrides = field(default_factory=SideOverrides)
     side1: SideOverrides = field(default_factory=SideOverrides)
 
@@ -81,6 +83,45 @@ _CATEGORY_A_EVENTS = frozenset({
 })
 
 
+# Supported Category-A events for pre_inject, with their engine name string and expected value type.
+# Value encoding: Move → int(move); Status → int(status); int → pass-through.
+_PRE_INJECT_EVENT_TABLE: dict[RNGEvent, tuple[str, type]] = {
+    RNGEvent.METRONOME_MOVE:    ("METRONOME_MOVE",    Move),
+    RNGEvent.SLEEP_TALK_MOVE:   ("SLEEP_TALK_MOVE",   Move),
+    RNGEvent.EFFECT_SPORE_WHICH: ("EFFECT_SPORE_WHICH", Status),
+    RNGEvent.ACUPRESSURE_STAT:  ("ACUPRESSURE_STAT",  int),
+    RNGEvent.ROAR_TARGET:       ("ROAR_TARGET",        int),
+    RNGEvent.TRI_ATTACK_STATUS: ("TRI_ATTACK_STATUS",  Status),
+}
+
+
+def pre_inject_payload(extra_pre_inject: Mapping[RNGEvent, object] | None) -> dict[str, int] | None:
+    """Convert a SweepConfig.extra_pre_inject map to the dict[str, int] the C++ binding expects.
+
+    Returns None when the input is None or empty. Raises ValueError for unsupported events
+    (including SPEED_TIE, which is handled by tie_winner) or wrong value types.
+    """
+    if not extra_pre_inject:
+        return None
+    out: dict[str, int] = {}
+    for event, value in extra_pre_inject.items():
+        entry = _PRE_INJECT_EVENT_TABLE.get(event)
+        if entry is None:
+            raise ValueError(
+                f"{event.name} is not supported in extra_pre_inject. "
+                f"Supported events: {[e.name for e in _PRE_INJECT_EVENT_TABLE]}. "
+                f"(SPEED_TIE is handled by SweepConfig.tie_winner, not extra_pre_inject.)"
+            )
+        name_str, expected_type = entry
+        if not isinstance(value, expected_type):
+            raise ValueError(
+                f"extra_pre_inject[{event.name}]: expected {expected_type.__name__}, "
+                f"got {type(value).__name__} ({value!r})."
+            )
+        out[name_str] = int(value)
+    return out
+
+
 def _crit_threshold(v) -> float:
     """Convert a bool or float crit value to a LuckProfile crit_threshold."""
     if v is True:
@@ -98,8 +139,9 @@ def _apply_extra_override(event: RNGEvent, value, kwargs: dict, slot1_kwargs: di
     """
     if event in _DEAD_EVENTS:
         raise ValueError(
-            f"ANCIENT_POWER_BOOST is dead in C++ (modeled as secondary); "
-            f"Task 6 decides remap. Do not inject {event.name} via extra_overrides."
+            f"ANCIENT_POWER_BOOST is dead in both engines (boost rides SECONDARY_FIRES / "
+            f"secondary_threshold; resolve_ancient_power_boost has zero call sites). "
+            f"Do not inject {event.name} via extra_overrides; use SECONDARY_FIRES instead."
         )
     if event in _CATEGORY_A_EVENTS:
         raise ValueError(
@@ -239,14 +281,10 @@ def _build_side_profile(side: SideOverrides) -> tuple[LuckProfile, Optional[Luck
 def build_sweep_luck(config: SweepConfig) -> SweepLuck:
     """Build per-side (and optionally per-slot-1) LuckProfiles from a SweepConfig.
 
-    Raises NotImplementedError if extra_pre_inject is non-empty (Category-A injection
-    is Task 6/7). Raises ValueError for unsupported or dead extra_overrides events.
+    Validates extra_pre_inject via pre_inject_payload (raises ValueError on bad events/types).
+    Raises ValueError for unsupported or dead extra_overrides events.
     """
-    if config.extra_pre_inject:
-        raise NotImplementedError(
-            "plain-mode Category-A pre-inject (Task 6/7): "
-            f"extra_pre_inject must be None/empty, got {config.extra_pre_inject!r}"
-        )
+    pre_inject_payload(config.extra_pre_inject)  # validate; raises ValueError on bad input
     p0, p0_slot1 = _build_side_profile(config.side0)
     p1, p1_slot1 = _build_side_profile(config.side1)
     return SweepLuck(p0=p0, p1=p1, p0_slot1=p0_slot1, p1_slot1=p1_slot1)
@@ -336,12 +374,13 @@ def run_to_decision_boundary(
     prompt. Opponent-only post-faint switches are applied automatically via opp_switch_actions.
 
     Returns None on uninjected-RNG or unexpected errors (candidate filtered); re-raises
-    UnportedTurn (fatal engine gap). ValueError/NotImplementedError from build_sweep_luck
-    propagate before the try-wrapped call.
+    UnportedTurn (fatal engine gap). ValueError from build_sweep_luck or pre_inject_payload
+    propagates before the try-wrapped call.
     """
-    # Build luck profiles (may raise ValueError/NotImplementedError — propagate before try block)
+    # Build luck profiles and pre_inject payload before try block so errors propagate loudly.
     luck = build_sweep_luck(config)
     order = build_speed_tie_order(state, config.tie_winner)
+    inject = pre_inject_payload(config.extra_pre_inject)
 
     try:
         # Step 1: run the turn
@@ -352,6 +391,7 @@ def run_to_decision_boundary(
             luck_p1_slot1=luck.p1_slot1,
             finalize_on_post_faint=True,
             speed_tie_order=order,
+            pre_inject=inject,
         )
 
         # Step 2: snapshot faint state once
