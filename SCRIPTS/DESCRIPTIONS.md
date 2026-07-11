@@ -17,3 +17,4 @@ Documented scripts in the new NuzlockeAI repo.
 - [ocr_check.py](ocr_check.py) — Loads the 4 crop PNGs from /tmp/vision/ and prints OCR results for each region. Run after crop_check.py.
 - [crop_check.py](crop_check.py) — Opens /tmp/vision/frame.png and saves the 4 cropped regions to /tmp/vision/ for calibrating regions.py.
 - [gen_seam_payload.py](gen_seam_payload.py) — Extracts a golden-trace initial_state into /tmp/d5_seam_payload.json for the native D5 seam benchmark (engine/build/nuzlocke_bench_seam). `--trace`/`--out` override the fixed default trace/path.
+- [parse_trainers.py](parse_trainers.py) — Rebuilds liveplay/data/trainers.pkl from the R&B text roster + syl-rnb-calc sets. --force gated: current sources produce output incompatible with the canonical 2026-06-07 pickle (see docstring).
