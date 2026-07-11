@@ -4,6 +4,7 @@ import math
 import random
 from collections import Counter
 from contextlib import contextmanager
+import dataclasses
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional
@@ -280,6 +281,42 @@ AVERAGE_LUCK = LuckProfile(
 
 
 STRICT_LUCK = LuckProfile(strict=True)
+
+
+# Sweep base: a SILENT-default profile. Every Category-B RNG event defaults to the
+# outcome that produces NO visible battle message; the message matcher then injects
+# only the VISIBLE (message-bearing) outcomes it actually observes. warn_uninjected
+# keeps un-injected events logging instead of crashing.
+#
+# Built from BAD_LUCK (whose no-fire defaults are already silent for crit/secondary/
+# proc/flinch/wake/snap/defrost/etc.), flipping the 4 events whose BAD default EMITS a
+# message to their silent direction:
+#   accuracy_threshold=0.0          -> hit (BAD=miss, "It missed!")
+#   paralysis_threshold=0.0         -> can act (BAD="is fully paralyzed!")
+#   attract_threshold=0.0           -> can act (BAD="immobilized by love!")
+#   confusion_self_hit_threshold=0.0-> no self-hit (BAD="hurt itself in confusion!")
+#
+# Hidden-duration rolls (Bind/Rampage) are NOT silent-vs-visible: the duration is invisible
+# until an END message fires (PKMNFREEDFROM / PKMNFATIGUECONFUSION). Assuming the SHORTEST
+# duration under-counts ticks and crashes the sweep on a real tick the engine thinks is over.
+# So assume the MAXIMUM duration and trim via the observed end-message handlers instead:
+#   binding_duration_roll=1.0  -> Bind lasts 5 turns (Grip Claw still forces 7 regardless)
+#   rampage_duration_roll=1.0  -> Thrash/Outrage/Petal Dance lasts 3 turns
+#
+# warn_uninjected/strict/injected are NEW LuckProfile fields (present in this codebase).
+# In OLD Python-path code these were Simulator-internal; here they live directly on the profile.
+# The sweep wrapper should still configure warn_uninjected=True to collapse un-injected-event
+# warnings per boundary.
+SWEEP_LUCK = dataclasses.replace(
+    BAD_LUCK,
+    warn_uninjected=True,
+    accuracy_threshold=0.0,
+    paralysis_threshold=0.0,
+    attract_threshold=0.0,
+    confusion_self_hit_threshold=0.0,
+    binding_duration_roll=1.0,
+    rampage_duration_roll=1.0,
+)
 
 
 def _strict_check(event: "RNGEvent", profile: LuckProfile) -> bool:
