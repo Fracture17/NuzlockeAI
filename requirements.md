@@ -2279,3 +2279,17 @@ file = "liveplay/sweep_secondaries.py"
 confidence = "settled"
 rationale = "Faithful OLD quirk: Tri Attack's secondary has status=None, so the grouped path reports fired=False when USEDMOVE is present and the TRI_ATTACK_STATUS injection block is unreachable with real data; Tri Attack status resolves via pre_inject/oracle."
 updated = "2026-07-11T06:32:58.257Z"
+
+[[record]]
+name = "rich_log_hp_completeness"
+file = "engine/src/"
+confidence = "settled"
+rationale = "Every C++ HP write must emit rich_log_damage/heal: _sim_hp_changes rebuilds HP trajectories from ALL DAMAGE/HEAL events. Non-move damage must NOT be SourceTag::MOVE (sweep sums filter source=='move'). Crash/recoil->RECOIL; OLD fine sources->broad."
+updated = "2026-07-11T16:59:24.784Z"
+
+[[record]]
+name = "post_faint_boundary_step0"
+file = "liveplay/sweep_driver.py"
+confidence = "settled"
+rationale = "run_to_decision_boundary Step 0: fainted active + living bench = party prompt, so actions ARE replacement switches; apply via apply_switch_cpp, never run_one_turn_cpp (action1=None TypeErrors). Mirrors OLD AWAIT_POST_FAINT_SWITCH inference."
+updated = "2026-07-11T16:59:31.809Z"
