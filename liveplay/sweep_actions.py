@@ -19,6 +19,7 @@ from liveplay.state_transition import (
     _fuzzy_find_move_slot,
     _fuzzy_find_side,
     _fuzzy_find_team_slot,
+    _fuzzy_find_team_slots,
     _side_from_constant_name,
     _species_match_threshold,
 )
@@ -66,6 +67,15 @@ class UnreproducibleObservedMoveError(Exception):
     desync), or the resolved move is not in enumerate_legal_actions for the candidate's
     state (legality desync). Either means the observed turn is unreproducible for this
     candidate, so the candidate is filtered.
+    """
+
+
+class PostFaintMovePhaseError(Exception):
+    """Raised when a candidate's sim-state has a fainted active but messages show a USEDMOVE.
+
+    Per-candidate filter signal: the candidate predicted a faint that the emulator
+    contradicts with an observed move. Like a diverged RNG branch, only that candidate
+    is filtered — valid sibling candidates survive. NOT a SimulationError subclass.
     """
 
 
@@ -842,3 +852,354 @@ def _validate_known_opponent_action(known_actions: dict, state: BattleState) -> 
                 f"slot {slot}: opponent used {act_label!r} "
                 f"which had p=0; possible={possible_labels}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Called-move collapse
+# ---------------------------------------------------------------------------
+
+def _called_wrapper_move(msg: MatchResult) -> Optional[Move]:
+    """Return the wrapper Move (Metronome/Sleep Talk) if msg is such a USEDMOVE, else None."""
+    if (
+        msg.string_id == _USEDMOVE_ID
+        and bool(msg.var_values)
+        and len(msg.var_values) > 1
+    ):
+        from liveplay.data.moves import move_name_to_enum
+        m = move_name_to_enum(msg.var_values[1])
+        if m in _CALLED_MOVE_EVENTS:
+            return m
+    return None
+
+
+def _same_usedmove_attacker(a: MatchResult, b: MatchResult, state: BattleState) -> bool:
+    """True if two USEDMOVE messages name the same attacker side."""
+    sa = _fuzzy_find_side(a.var_values[0], state, side_hint=a.side_hint, reference_kind="actor")
+    sb = _fuzzy_find_side(b.var_values[0], state, side_hint=b.side_hint, reference_kind="actor")
+    return sa is not None and sa == sb
+
+
+def _collapse_metronome_calls(
+    messages: list[MatchResult], state: BattleState
+) -> list[MatchResult]:
+    """Collapse each called-move wrapper USEDMOVE + called-move USEDMOVE pair into one tagged message.
+
+    A called-move wrapper (Metronome, Sleep Talk) emits two USEDMOVE lines for the same
+    attacker: "used <wrapper>!" then "used <called>!". The engine models this as a SINGLE
+    move use (the called move). We keep the wrapper message (correct move SLOT for known-action
+    / PP bookkeeping), tag it with the resolved called Move, and drop the called-move message.
+    _inject_non_move_rng reads the tag to inject METRONOME_MOVE or SLEEP_TALK_MOVE.
+
+    A wrapper with no following called-move USEDMOVE passes through untouched (e.g. Sleep Talk
+    with no valid sub-move → failed). A called move not in the Move enum hard-crashes.
+    """
+    out: list[MatchResult] = []
+    i = 0
+    n = len(messages)
+    while i < n:
+        msg = messages[i]
+        nxt = messages[i + 1] if i + 1 < n else None
+        if (
+            _called_wrapper_move(msg) is not None
+            and nxt is not None
+            and nxt.string_id == _USEDMOVE_ID
+            and nxt.var_values
+            and len(nxt.var_values) > 1
+            and _same_usedmove_attacker(msg, nxt, state)
+        ):
+            called_name = nxt.var_values[1]
+            called_enum = _resolve_called_move(called_name)
+            if called_enum is None:
+                wrapper_name = msg.var_values[1]
+                raise SimulationError(
+                    reason=f"{wrapper_name} called a move not in the system: {called_name!r}",
+                )
+            msg.metronome_called = called_enum
+            out.append(msg)
+            i += 2
+            continue
+        out.append(msg)
+        i += 1
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Opponent post-faint switch-in branch builder
+# ---------------------------------------------------------------------------
+
+def _opponent_switch_in_actions(
+    messages: list[MatchResult],
+    state: BattleState,
+) -> list[tuple]:
+    """Return ordered SWITCH action branches for side-1 switch-ins this boundary.
+
+    Builds the opponent's post-faint switch-in Action list (feeds run_with_capture's
+    opp_switch_actions param). Player-side switch-ins are excluded. Each switch-in fans
+    out when a duplicate-species name cannot be reduced to one slot; the cartesian product
+    of all per-switch-in slot choices is returned as branches. Always returns at least one
+    branch (the empty tuple when no switch-ins are present).
+    """
+    per_switch_slots: list[list[int]] = []
+    for msg in messages:
+        if msg.string_id not in _SWITCH_IDS:
+            continue
+        if _side_from_constant_name(msg.constant_name) != 1:
+            continue
+        incoming_name = msg.var_values[-1] if msg.var_values else ""
+        slots = _fuzzy_find_team_slots(incoming_name, 1, state)
+        if not slots:
+            team_species = [p.species.name for p in state.sides[1].team]
+            raise SimulationError(
+                reason=(
+                    f"Observed opponent switch-in '{incoming_name}' does not match any team "
+                    f"slot on side 1 (roster desync). Team: {team_species}"
+                )
+            )
+        per_switch_slots.append(slots)
+    if not per_switch_slots:
+        return [tuple()]
+    branches: list[tuple] = []
+    for combo in itertools.product(*per_switch_slots):
+        branches.append(tuple(
+            Action(kind=ActionKind.SWITCH, switch_to_slot=s) for s in combo
+        ))
+    return branches
+
+
+# ---------------------------------------------------------------------------
+# Per-mover crit/hit counts from flat message stream
+# ---------------------------------------------------------------------------
+
+def message_crit_counts_with_state(
+    messages: list[MatchResult],
+    state: BattleState,
+) -> list[int]:
+    """Return per-mover crit counts, index-aligned with _message_action_order_with_state.
+
+    Each resolved USEDMOVE advances the current-mover index; each STRINGID_CRITICALHIT
+    increments that mover's count. A CRITICALHIT before any USEDMOVE is ignored.
+    """
+    counts: list[int] = []
+    current_idx = -1
+    for msg in messages:
+        if msg.string_id == _USEDMOVE_ID and msg.var_values:
+            side = _fuzzy_find_side(msg.var_values[0], state,
+                                    side_hint=msg.side_hint, reference_kind="actor")
+            if side is not None:
+                counts.append(0)
+                current_idx += 1
+        elif msg.string_id == "STRINGID_CRITICALHIT" and current_idx >= 0:
+            counts[current_idx] += 1
+    return counts
+
+
+def _message_hit_counts_with_state(
+    messages: list[MatchResult],
+    state: BattleState,
+) -> list[int]:
+    """Return per-mover hit counts, index-aligned with _message_action_order_with_state.
+
+    Each resolved USEDMOVE advances the current-mover index. STRINGID_HITXTIMES
+    var_values[0] sets that mover's count (default 1).
+    """
+    counts: list[int] = []
+    current_idx = -1
+    for msg in messages:
+        if msg.string_id == _USEDMOVE_ID and msg.var_values:
+            side = _fuzzy_find_side(msg.var_values[0], state,
+                                    side_hint=msg.side_hint, reference_kind="actor")
+            if side is not None:
+                counts.append(1)
+                current_idx += 1
+        elif msg.string_id == "STRINGID_HITXTIMES" and current_idx >= 0 and msg.var_values:
+            try:
+                counts[current_idx] = int(msg.var_values[0])
+            except (ValueError, IndexError):
+                pass
+    return counts
+
+
+# ---------------------------------------------------------------------------
+# Multi-hit detection
+# ---------------------------------------------------------------------------
+
+def _detect_multi_hit(messages: list) -> tuple[int, int]:
+    """Return (n_hits, n_crits) from a message list of MatchResult or ActionGroup objects.
+
+    Scans primaries and secondaries. n_hits from STRINGID_HITXTIMES var_values[0];
+    n_crits from count of STRINGID_CRITICALHIT entries. Defaults: (1, 0).
+    """
+    n_hits = 1
+    n_crits = 0
+
+    def _scan(mr):
+        nonlocal n_hits, n_crits
+        if mr.string_id == "STRINGID_HITXTIMES":
+            if mr.var_values:
+                try:
+                    n_hits = int(mr.var_values[0])
+                except (ValueError, IndexError):
+                    pass
+        elif mr.string_id == "STRINGID_CRITICALHIT":
+            n_crits += 1
+
+    for msg in messages:
+        if hasattr(msg, "secondaries"):
+            _scan(msg.primary)
+            for sec in msg.secondaries:
+                _scan(sec)
+        else:
+            _scan(msg)
+
+    return n_hits, n_crits
+
+
+# ---------------------------------------------------------------------------
+# Forced opponent switch-in validation
+# ---------------------------------------------------------------------------
+
+def _validate_forced_opponent_switch(messages: list[MatchResult], state: BattleState) -> None:
+    """Assert that the observed opponent forced switch-in matches the deterministic AI pick.
+
+    Uses cpp.ai_switch_info (C++ binding) to determine the expected post-KO slot. Skips
+    the check in doubles (len(active_indices) > 1). Raises UnexpectedOpponentActionError
+    if the observed send-out doesn't match the AI's pick. Returns without raising when
+    post_ko_switch is None (all bench fainted — no valid candidate).
+    """
+    import json
+    import nuzlocke_engine_cpp as cpp
+    import liveplay.sweep_io as sweep_io
+
+    opp_side = state.sides[1]
+    active_indices = opp_side.active_indices
+
+    # Doubles: multi-faint ordering is complex; skip strict check.
+    if len(active_indices) > 1:
+        return
+
+    # Only run when opponent has a fainted active.
+    if not any(opp_side.team[idx].fainted for idx in active_indices):
+        return
+
+    # Find the observed switch-in for the opponent in this batch.
+    observed_slot = None
+    for msg in messages:
+        if msg.string_id not in _SWITCH_IDS:
+            continue
+        if _side_from_constant_name(msg.constant_name) != 1:
+            continue
+        incoming_name = msg.var_values[-1] if msg.var_values else ""
+        observed_slot = _fuzzy_find_team_slot(incoming_name, 1, state)
+        if observed_slot is None:
+            team_species = [p.species.name for p in opp_side.team]
+            raise SimulationError(
+                reason=(
+                    f"Observed forced switch-in '{incoming_name}' on side 1 does not match "
+                    f"any team slot (roster desync). Team: {team_species}"
+                )
+            )
+        break  # singles: only one forced replacement expected
+
+    if observed_slot is None:
+        return  # no switch-in message found; nothing to validate
+
+    result = cpp.ai_switch_info(json.dumps(sweep_io.to_jsonable(state)), 1)
+    expected_slot = result.get("post_ko_switch")
+    if expected_slot is None:
+        # All bench fainted — no valid AI candidate; nothing to compare against.
+        return
+
+    if observed_slot != expected_slot:
+        observed_species = opp_side.team[observed_slot].species.name
+        expected_species = opp_side.team[expected_slot].species.name
+        raise UnexpectedOpponentActionError(
+            f"Forced opponent switch-in was {observed_species} (slot {observed_slot}) "
+            f"but AI chose {expected_species} (slot {expected_slot})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Candidate action resolution
+# ---------------------------------------------------------------------------
+
+def _sweep_resolve_candidate_actions(
+    state: BattleState,
+    messages: list[MatchResult],
+    known_actions: dict,
+    *,
+    opponent_hp_deltas: list[list[tuple]] = None,
+    player_hp_deltas: list[list[tuple]] = None,
+    slot_map: Optional[dict] = None,
+) -> tuple[list, list]:
+    """Resolve per-side candidate action lists for one initial candidate.
+
+    known_actions: {side: list[Action|None]} — per-slot known actions.
+    Raises PostFaintMovePhaseError (per-candidate filter) when the state has a fainted
+    active but messages contain a USEDMOVE — simulator/emulator phase disagreement.
+    Returns (candidates0, candidates1).
+    """
+    from liveplay.sweep_reconcile import has_fainted_active
+
+    if opponent_hp_deltas is None:
+        opponent_hp_deltas = [[]]
+    if player_hp_deltas is None:
+        player_hp_deltas = [[]]
+
+    if has_fainted_active(state):
+        # Post-faint switch boundary: USEDMOVE messages are a per-candidate contradiction.
+        if any(m.string_id == _USEDMOVE_ID for m in messages):
+            raise PostFaintMovePhaseError(
+                "Post-faint switch state received USEDMOVE messages. "
+                "Emulator and simulator disagree on turn phase: simulator is at "
+                "AWAIT_POST_FAINT_SWITCH but emulator reports a move being used."
+            )
+        fainted_sides = {
+            si
+            for si, side in enumerate(state.sides)
+            for team_idx in side.active_indices
+            if side.team[team_idx].fainted
+        }
+        for si in sorted(fainted_sides):
+            slot_actions = known_actions.get(si, [None])
+            known_for_side = next((a for a in slot_actions if a is not None), None)
+            if known_for_side is None:
+                raise SimulationError(
+                    reason=(
+                        f"Post-faint switch: side {si} has a fainted active Pokemon but "
+                        f"no switch-in message was captured. "
+                        f"Cannot determine the replacement — capture may have missed the "
+                        f"switch-in message."
+                    )
+                )
+
+        def _get_faint_action(si):
+            slot_actions = known_actions.get(si, [None])
+            return next((a for a in slot_actions if a is not None), None)
+
+        n_slots_0 = len(state.sides[0].active_indices)
+        n_slots_1 = len(state.sides[1].active_indices)
+        if 0 in fainted_sides:
+            action = _get_faint_action(0)
+            candidates0 = [action] if n_slots_0 == 1 else [[action]]
+        else:
+            candidates0 = [None] if n_slots_0 == 1 else [[None]]
+        if 1 in fainted_sides:
+            action = _get_faint_action(1)
+            candidates1 = [action] if n_slots_1 == 1 else [[action]]
+        else:
+            candidates1 = [None] if n_slots_1 == 1 else [[None]]
+        return candidates0, candidates1
+
+    # Normal (non-faint) path
+    hit_counts = _message_hit_counts_with_state(messages, state)
+    movers = _message_action_order_with_state(messages, state, slot_map=slot_map)
+
+    candidates0 = _build_side_candidates(
+        0, state, known_actions.get(0, [None]),
+        opponent_hp_deltas, player_hp_deltas, hit_counts, movers,
+    )
+    candidates1 = _build_side_candidates(
+        1, state, known_actions.get(1, [None]),
+        opponent_hp_deltas, player_hp_deltas, hit_counts, movers,
+    )
+    return candidates0, candidates1
