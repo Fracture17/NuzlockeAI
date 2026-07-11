@@ -287,6 +287,8 @@ Additional bonus (38% of the time), only when AI does NOT see a kill AND player 
 
 **Code discrepancy:** AI.md lists Venoshock as a qualifying combo move alongside Hex and Venom Drench. **Venoshock is not in the code.** Only Hex, Venom Drench, and ability Merciless are checked.
 
+**[C++ status: resolved/not applicable — the entire Hex/Venom Drench/Merciless +2 combo bonus is absent from the C++ implementation; dist_poison_move returns a flat +6 (ai_scorer_dist.cpp:218). The ai.ts combo-bonus block was not ported; Venoshock's absence within it is moot.]**
+
 ### Protect / King's Shield / Spiky Shield / Baneful Bunker / Detect / Obstruct
 All scored identically.
 
@@ -704,34 +706,54 @@ moveName == "Glare" || (moveName == "Stun Spore" && playerTypes.includes("Electr
 ```
 When `moveName == "Glare"`, this is always `true`, so Glare **always** receives −40 regardless of the player's type. The intent was likely to block Glare on Electric-type players only (since Glare is Normal type, not caught by the Electric-type immunity check). **Glare is functionally never used by the AI.**
 
+**[C++ status: fixed — ai_scorer_dist.cpp:114. C++ routes all PARALYSIS_MOVES through dist_paralysis, which only gates on Electric type when the move's own type is Electric (line 120). Glare (Normal type) skips that branch and receives the standard speed-based score (6 or 7). Not in divergence logs; this is an intentional correction.]**
+
 ### BUG: Stun Spore Incorrectly Blocked on Electric Types
 The code blocks Stun Spore on Electric-type players (`moveName == "Stun Spore" && playerTypes.includes("Electric")`). In Gen 8, Electric types are NOT immune to Stun Spore (which is a Grass-type move); only Electric-type paralysis moves are blocked by Electric typing in Gen 6+. This is an AI misplay that benefits the player.
+
+**[C++ status: fixed — ai_scorer_dist.cpp:120. The Electric-type block is conditioned on `md.move_type == TYPE_ELECTRIC`; Stun Spore is Grass type and is not blocked. Not in divergence logs; this is an intentional correction.]**
 
 ### BUG: Venoshock Missing from Poison Combo Bonus
 **AI.md says:** "AI mon has Hex, Venom Drench, Venoshock or the ability Merciless" triggers the +2 bonus.  
 **Code checks:** Only Hex, Venom Drench, and ability Merciless. Venoshock is absent.
 
+**[C++ status: resolved/not applicable — the entire combo bonus block was not ported to C++; dist_poison_move returns a flat +6 (ai_scorer_dist.cpp:218). Venoshock's absence is subsumed by the block being omitted entirely.]**
+
 ### BUG: Sun Recovery Uses 100% Heal Rate
 Morning Sun / Synthesis / Moonlight in Sun call `shouldAIRecover(1.0)` but the actual heal is 2/3 (67%). This inflates the AI's willingness to recover in Sun and has a TODO comment in the code.
+
+**[C++ status: fixed — ai_scorer.cpp:80. C++ passes `0.67` as the heal fraction for these moves in sun, matching the actual 2/3 heal rate. Not in divergence logs; this is an intentional correction of the TODO.]**
 
 ### BUG: Incapacitation Check Is Incomplete
 Code: `playerIncapacitated = playerStatus == "frz" || playerStatus == "slp"`  
 AI.md also lists recharging (after Hyper Beam etc.) and Truant loafing. Neither is implemented.
 
+**[C++ status: partially fixed — ai_scorer_internal.h:265. C++ `is_incapacitated` covers freeze, sleep, AND `VOL_RECHARGING`. Truant loafing (`TRUANT_LOAFING_BIT`) is still absent from this check. Recharging: fixed. Truant: UNRESOLVED — not in divergence logs; needs decision on whether to reproduce or correct.]**
+
 ### DOC OMISSION: Counter and Mirror Coat Excluded from HD
 AI.md does not mention that Counter and Mirror Coat are excluded from the highest-damage competition. They are listed in the `calculateHighestDamage` exclusion array in code.
+
+**[C++ status: resolved/not applicable — Counter and Mirror Coat have their own scoring branch in dist_status_special (ai_scorer_dist.cpp:380) and are never routed through the highest-damage path. The omission is a doc gap only; C++ behavior is correct.]**
 
 ### DOC OMISSION: Bulldoze Is a Speed-Reducing Move
 AI.md lists Icy Wind, Electroweb, Rock Tomb, Mud Shot, Low Sweep — but not Bulldoze. Bulldoze is in the code's `isDamagingSpeedReducing` check.
 
+**[C++ status: resolved/not applicable — Bulldoze (ID 523) is in SPEED_REDUCTION_MOVES (engine/generated/ai_move_sets.h:134) and handled at ai_scorer_dist.cpp:625. Doc omission only; C++ is correct.]**
+
 ### DOC OMISSION: Breaking Swipe, Snarl, Mystical Fire Are Stat-Reducing Moves
 AI.md only mentions "Trop Kick, Skitter Smack, etc." for the Atk/SpAtk reduction category. Code explicitly includes Breaking Swipe (Physical, Atk-reducing), Snarl, and Mystical Fire (Special-reducing).
+
+**[C++ status: resolved/not applicable — Breaking Swipe (784), Snarl (555), Mystical Fire (595) are all in STAT_REDUCTION_DAMAGE_MOVES (engine/generated/ai_move_sets.h:139), handled at ai_scorer_dist.cpp:640. Doc omission only; C++ is correct.]**
 
 ### DOC OMISSION: Hypnosis Is in the Sleep Group
 AI.md lists Yawn, Dark Void, Grass Whistle, Sing. Hypnosis uses the same code block.
 
+**[C++ status: UNRESOLVED — Yawn has dedicated handling at ai_scorer_dist.cpp:302 (with Insomnia/Vital Spirit/terrain checks), but Hypnosis, Sing, Grass Whistle, and Dark Void all fall through to the bare +6 default (ai_scorer_dist.cpp:460). None of the sleep-group checks (Insomnia, Vital Spirit, Electric/Misty Terrain, existing status) are applied to these moves. Not in divergence logs; needs decision on whether to add the checks or accept the simplified behavior.]**
+
 ### DOC OMISSION: Spiky Shield, Baneful Bunker, Detect, Obstruct
 AI.md says "King's Shield has no unique AI" but doesn't mention Spiky Shield, Baneful Bunker, Detect, or Obstruct. All five are handled identically to Protect in the code.
+
+**[C++ status: resolved/not applicable — all five (plus Wide Guard and Quick Guard) are in PROTECT_MOVES (engine/generated/ai_move_sets.h:10) and all route through dist_protect. Doc omission only; C++ is correct.]**
 
 ### DOC OMISSION: Magnet Rise, Scary Face, Flame Charge
 These moves have AI scoring in the code but are not listed in AI.md:
@@ -739,29 +761,49 @@ These moves have AI scoring in the code but are not listed in AI.md:
 - Scary Face: +6 (AI slower), −20 (AI faster)
 - Flame Charge: +6 when not HD, AI slower, valid damage rolls
 
+**[C++ status: resolved/not applicable — all three have explicit handling in dist_status_special: Magnet Rise at ai_scorer_dist.cpp:444 (−40 if active, +8 if AI faster+player has Ground, +5 otherwise), Scary Face at ai_scorer_dist.cpp:309, Flame Charge at ai_scorer_dist.cpp:649. Doc omission only; C++ is correct.]**
+
 ### DOC OMISSION: Smack Down / Thousand Arrows Grounding Bonus
 Not in AI.md. +6 bonus when player is Flying type or has Levitate and is not already grounded.
+
+**[C++ status: resolved/not applicable — implemented at ai_scorer_dist.cpp:658. Doc omission only; C++ is correct.]**
 
 ### DOC OMISSION: Substitute — Sub Already Active Is a Useless Condition
 AI.md does not list "Substitute already active" as a reason to score −40. The code does.
 
+**[C++ status: resolved/not applicable — implemented at ai_scorer.cpp:134 (`VOL_SUBSTITUTE` check). Doc omission only; C++ is correct.]**
+
 ### DOC OMISSION: Tailwind Already Active → −40
 AI.md does not explicitly list the "already active" case for Tailwind. Code gives −40.
+
+**[C++ status: resolved/not applicable — implemented at ai_scorer_dist.cpp:178 (`SC_TAILWIND` check → −40). Doc omission only; C++ is correct.]**
 
 ### DOC CLARIFICATION: Shell Smash SpAtk Condition Is Asymmetric
 AI.md says "If AI mon's attack stat is +1 or higher, or either attacking stat is at +6." The code confirms: the check is `boosts.atk >= 1 OR boosts.spatk >= 6`. Physical attack at +1 blocks Shell Smash; Special attack at +1 through +5 does not.
 
+**[C++ status: resolved/not applicable — confirmed at ai_scorer.cpp:161 (`ai_mon.stage0 >= 1 || ai_mon.stage2 >= 6`). Behavior matches ai.ts; doc clarification only.]**
+
 ### DOC CLARIFICATION: Encore When Faster but Not Encouraged → +6
 AI.md's developer noted uncertainty here. Confirmed via code: when AI is faster but the move is not "encouraged," no modifier is pushed, so the default status score of +6 applies.
+
+**[C++ status: resolved/not applicable — confirmed at ai_scorer_dist.cpp:376: when `ai_fst`, C++ returns `{{6, 1.0}}`. Doc clarification only; C++ behavior matches.]**
 
 ### DOC CLARIFICATION: Tailwind −20 vs −40
 AI.md does not give a score for Tailwind already being active. Code applies −40 (not −20).
 
+**[C++ status: resolved/not applicable — confirmed at ai_scorer_dist.cpp:178. Matches ai.ts; doc clarification only.]**
+
 ### DOC CLARIFICATION: Terrain Moves Already Active → −40
 Not explicit in AI.md. Code applies −40 when the terrain is already set.
+
+**[C++ status: resolved/not applicable — confirmed in dist_terrain (ai_scorer_dist.cpp). Doc clarification only; C++ matches.]**
 
 ### NUMERICAL DISCREPANCY: Helping Hand / Follow Me
 AI.md says "+6" for these moves. In singles, the calc gives them −6 (score of 0 − 6 = −6 net, with the default +6 suppressed). These moves are effectively disabled in singles.
 
+**[C++ status: resolved/not applicable — ai_scorer_dist.cpp:315 returns `{{0, 1.0}}` in singles (doubles returns `{{6, 1.0}}`). The "−6 net" framing from ai.ts is replaced by a direct 0 return; effective behavior matches (moves are not chosen in singles). Doc discrepancy only.]**
+
 ### NUMERICAL DISCREPANCY: Recovery Move Threshold
 AI.md says "at 85% or higher" the AI gets a −6 penalty. Code uses `aiHealthPercentage >= 85`, confirming 85% exactly incurs the −6 penalty.
+
+**[C++ status: resolved/not applicable — confirmed at ai_scorer_dist.cpp:31 (`hp_pct >= 0.85`). Behavior matches ai.ts exactly; numerical discrepancy note is now confirmed correct and documented.]**
