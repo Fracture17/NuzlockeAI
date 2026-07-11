@@ -2248,9 +2248,9 @@ updated = "2026-07-11T01:37:03.794Z"
 [[record]]
 name = "extra_pre_inject_deferred"
 file = "liveplay/sweep_driver.py"
-confidence = "requirement"
-rationale = "User-approved (2026-07-10): build_sweep_luck fails loud (NotImplementedError) on non-empty extra_pre_inject. Category-A pre-inject (Metronome/Sleep Talk sub-move, Effect Spore, Acupressure, Roar) needs a plain-mode payload hook before E2 Task 7."
-updated = "2026-07-11T01:37:18.844Z"
+confidence = "settled"
+rationale = "RESOLVED (Task 6d): extra_pre_inject now converts via pre_inject_payload to the C++ plain-mode pre_inject hook (6 Category-A events, name-keyed ints). Unmapped events / wrong value types raise ValueError before the sweep try-block."
+updated = "2026-07-11T06:32:14.067Z"
 
 [[record]]
 name = "sweep_luck_preset_port"
@@ -2258,3 +2258,24 @@ file = "liveplay/rng.py"
 confidence = "settled"
 rationale = "SWEEP_LUCK ported from OLD simulation_runner.py:32-60 (BAD_LUCK base, accuracy/paralysis/attract/confusion-self-hit forced ON, binding/rampage rolls maxed). OLD-only warn/strict fields have no NEW equivalent and were dropped."
 updated = "2026-07-11T01:37:26.668Z"
+
+[[record]]
+name = "plain_mode_pre_inject"
+file = "engine/src/oracle.h"
+confidence = "settled"
+rationale = "pre_inject_or_oracle: sticky non-consuming map (RngEventC int->engine int), consulted ONLY when overrides==nullptr; else oracle_resolve. Mirrors OLD sweep pre_rng_inject + forced_tie precedent. Absent key -> nullptr -> byte-identical (100k-verified)."
+updated = "2026-07-11T06:32:30.994Z"
+
+[[record]]
+name = "ancient_power_boost_dead"
+file = "liveplay/sweep_driver.py"
+confidence = "settled"
+rationale = "ANCIENT_POWER_BOOST is dead in BOTH engines: OLD resolve_ancient_power_boost has zero call sites; the 10% self-boost is a SecondaryEffect riding SECONDARY_FIRES/secondary_threshold. Kept fail-loud in _DEAD_EVENTS; never remap it."
+updated = "2026-07-11T06:32:41.484Z"
+
+[[record]]
+name = "tri_attack_group_path_quirk"
+file = "liveplay/sweep_secondaries.py"
+confidence = "settled"
+rationale = "Faithful OLD quirk: Tri Attack's secondary has status=None, so the grouped path reports fired=False when USEDMOVE is present and the TRI_ATTACK_STATUS injection block is unreachable with real data; Tri Attack status resolves via pre_inject/oracle."
+updated = "2026-07-11T06:32:58.257Z"
