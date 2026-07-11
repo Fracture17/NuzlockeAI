@@ -313,23 +313,9 @@ def build_speed_tie_order(state: BattleState, tie_winner: int) -> list[tuple[int
 # Faint helpers
 # ---------------------------------------------------------------------------
 
-def has_fainted_active(state: BattleState) -> bool:
-    """Return True if any side has a fainted active Pokemon AND living bench members.
-
-    Mirrors the condition under which the engine enters a post-faint switch boundary:
-    a side whose active slot is fainted but whose bench is not yet exhausted still needs
-    a replacement. A side with no living bench members is a battle-over condition.
-    """
-    for side in state.sides:
-        bench_available = any(
-            i not in side.active_indices and not m.fainted
-            for i, m in enumerate(side.team)
-        )
-        if not bench_available:
-            continue
-        if any(side.team[team_idx].fainted for team_idx in side.active_indices):
-            return True
-    return False
+# has_fainted_active lives in sweep_reconcile (canonical home); re-exported here
+# for callers/tests that import it from sweep_driver.
+from liveplay.sweep_reconcile import has_fainted_active  # noqa: E402,F401
 
 
 def _side_has_fainted_active(side) -> bool:
