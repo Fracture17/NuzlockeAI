@@ -2216,3 +2216,45 @@ file = "engine/src/event_log.h"
 confidence = "requirement"
 rationale = "Rich-event stream reset is Python-driven clear(): GameDriver does NOT auto-reset per turn. VOLATILE_APPLY emits only for confusion (consumer reads only volatile=confused). EXP_GAIN shows GROSS exp when net>0 else 0; one LEVEL_UP per level crossed."
 updated = "2026-07-10T17:41:54.334Z"
+
+[[record]]
+name = "sweep_forced_speed_tie"
+file = "engine/src/core_leaf.cpp"
+confidence = "settled"
+rationale = "Plain-mode forced_tie (SpeedTieOrder) resolves controlled cross-side MOVE ties, sticky per turn (mirrors OLD sweep pre_rng_inject re-fire). Needed since SortKey::top_two_equal ignores tie, so these always throw NeedsRNG. Oracle mode takes precedence."
+updated = "2026-07-11T01:36:23.830Z"
+
+[[record]]
+name = "per_slot_attacker_luck"
+file = "engine/src/turn.cpp"
+confidence = "settled"
+rationale = "luck_pX_slot1 (nullptr default) is the ATTACKER damage-loop luck only when the acting entry's source_slot==1, at the 3 attacker sites. Defender/residual/TurnLuck stay side-level — mirrors OLD sweep per-slot roll/crit keys. nullptr = byte-identical."
+updated = "2026-07-11T01:36:36.120Z"
+
+[[record]]
+name = "sweep_error_classification"
+file = "liveplay/sweep_driver.py"
+confidence = "settled"
+rationale = "run_with_capture: UnportedTurn re-raises (fatal gap); RuntimeError with 'NeedsRNG' = candidate filtered (None), once-per-key stderr log (OLD UninjectedRNGError analog); other exceptions traceback-once + None; adapter errors raise before the try."
+updated = "2026-07-11T01:36:49.087Z"
+
+[[record]]
+name = "sweep_boundary_flow"
+file = "liveplay/sweep_driver.py"
+confidence = "settled"
+rationale = "Boundary = one run_one_turn_cpp(finalize_on_post_faint=True); snapshot faints ONCE; player fainted-with-bench returns WITHOUT applying opp switches; else apply_switch_cpp per snapshot order; no re-scan (preserves faint_queue_no_rebuild_bug)."
+updated = "2026-07-11T01:37:03.794Z"
+
+[[record]]
+name = "extra_pre_inject_deferred"
+file = "liveplay/sweep_driver.py"
+confidence = "requirement"
+rationale = "User-approved (2026-07-10): build_sweep_luck fails loud (NotImplementedError) on non-empty extra_pre_inject. Category-A pre-inject (Metronome/Sleep Talk sub-move, Effect Spore, Acupressure, Roar) needs a plain-mode payload hook before E2 Task 7."
+updated = "2026-07-11T01:37:18.844Z"
+
+[[record]]
+name = "sweep_luck_preset_port"
+file = "liveplay/rng.py"
+confidence = "settled"
+rationale = "SWEEP_LUCK ported from OLD simulation_runner.py:32-60 (BAD_LUCK base, accuracy/paralysis/attract/confusion-self-hit forced ON, binding/rampage rolls maxed). OLD-only warn/strict fields have no NEW equivalent and were dropped."
+updated = "2026-07-11T01:37:26.668Z"

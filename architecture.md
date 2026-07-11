@@ -20,6 +20,6 @@
 
 **Golden-trace parity:** frozen corpus `tests/fixtures/golden_traces/` (1028 traces) replays through `GameDriver` forced replay (`forced_trace.h`) via `SCRIPTS/replay_golden_traces.py`, asserting winner/turn/fingerprint identity. The 100k corpus (`golden_traces_100k/`, git-ignored) is the extended gate.
 
-**Stage E seam:** `liveplay/engine_select.py` — `run_candidate_sweep`/`enumerate_legal_actions` raise `NotImplementedError` until the C++ sweep is wired; the Python `Simulator` + sweep stay in the old repo (`PycharmProjects/NuzlockeAI`) as the parity referee until then.
+**Stage E seam:** `liveplay/engine_select.py` — `enumerate_legal_actions` and `compute_action_probabilities` are live (C++-backed); `run_candidate_sweep` still raises until E2 Task 7 wires the sweep orchestration onto `liveplay/sweep_driver.py` (per-trial C++ turn driver over `cpp_driver.run_one_turn_cpp`/`apply_switch_cpp`). The old repo (`PycharmProjects/NuzlockeAI`) stays the frozen parity referee until then.
 
 **Stress test:** `SCRIPTS/stress_test.py` — loops battles from `States/` savestates, 100% `RandomPolicy`, logs to `/tmp/vision/stress/`.
