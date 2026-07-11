@@ -125,7 +125,7 @@ def test_action_payload_mega():
 
     expected_keys = {
         "kind", "move_slot", "move_override", "switch_to_slot",
-        "target_side", "target_slot", "mega",
+        "target_side", "target_slot", "mega", "source_slot",
     }
     assert set(payload.keys()) == expected_keys
     assert payload["mega"] is True
