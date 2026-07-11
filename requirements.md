@@ -1,13 +1,13 @@
 [[record]]
 name = "doubles_target_slot_simplified"
-file = "src/ai.py"
+file = "engine/src/ai_damage.cpp"
 confidence = "provisional"
 rationale = "Doubles target-slot expansion duplicates MOVE actions (target_slot=1 at 50/50 probability share) but scores both against the same first opponent. Full per-target scoring needs _build_damage_context keyed by (move_slot, target_slot)."
 updated = "2026-06-07T20:45:45.201Z"
 
 [[record]]
 name = "switch_candidate_bug"
-file = "src/ai.py"
+file = "engine/src/ai_scorer.cpp"
 confidence = "requirement"
 rationale = "Candidate validation bug: once a faster non-OHKOd bench mon is found, subsequent slower mons are also treated as valid. Replicates documented AI.md game behavior (_has_valid_switch_candidate)."
 updated = "2026-06-07T20:45:53.621Z"
@@ -49,7 +49,7 @@ updated = "2026-06-07T21:42:04.280Z"
 
 [[record]]
 name = "sweep_enumeration_design"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "_run_phase_loop enumerates an arbitrary-length mover list (partial turn=1, singles=2, doubles up to 4) one mover per iteration, carrying PartialCandidate survivors forward. Replaces the old fixed two-phase (first/second damage side) design."
 updated = "2026-06-11T18:11:14.498Z"
@@ -154,7 +154,7 @@ updated = "2026-06-09T17:28:41.876Z"
 
 [[record]]
 name = "accuracy_hit_injection"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_secondaries.py"
 confidence = "settled"
 rationale = "Matcher injects ACCURACY only on an observed ATTACKMISSED (=False). A landed hit needs no injection: SWEEP_LUCK's silent default is hit. Old hit-side ACCURACY=True reconstruction removed; only visible failure messages drive injections."
 updated = "2026-06-19T15:42:03.628Z"
@@ -182,14 +182,14 @@ updated = "2026-06-10T02:50:26.680Z"
 
 [[record]]
 name = "strict_sweep_no_silent_rng"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "Sweep base SWEEP_LUCK=BAD_LUCK+warn_uninjected, thresholds tuned so every Category-B event defaults to its NO-message (silent) outcome: ACCURACY/PARALYSIS/ATTRACT/CONFUSION_SELF_HIT flipped to 0.0. Uninjected events log a WARNING, never raise."
 updated = "2026-06-19T15:41:55.225Z"
 
 [[record]]
 name = "category_a_pauses_strict"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "_run_to_decision_boundary must not auto-answer Category-A pauses (Acupressure/Moody/Roar target etc.) with the first option during sweeps; un-pre-injected pauses raise UninjectedRNGError like any other silent default."
 updated = "2026-06-10T02:50:37.518Z"
@@ -216,57 +216,50 @@ rationale = "Replay must call the real run_candidate_sweep via src/sweep_recorde
 updated = "2026-06-10T02:50:57.595Z"
 
 [[record]]
-name = "proc_fires_shared_override"
-file = "src/simulator.py"
-confidence = "settled"
-rationale = "PROC_FIRES has its own proc_threshold override field (split from SECONDARY_FIRES's secondary_threshold), so a move secondary and an ability/item proc inject different values in one action without colliding. _OVERRIDE_MAP gives each event a triple."
-updated = "2026-06-14T05:35:32.741Z"
-
-[[record]]
 name = "mover_list_no_fallback"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "_build_mover_list returns the observed USEDMOVE side order verbatim; with no observed USEDMOVE it returns [] and the sweep yields no candidates (SimulationError), never falling back to a guessed mover order."
 updated = "2026-06-11T18:11:21.081Z"
 
 [[record]]
 name = "sweep_own_damage_dedup"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "Single-hit movers dedup their 16 rolls by the mover's OWN damage (_own_damage keyed on attacker_side/slot), not cumulative damage to the target. Maximizes per-attack granularity and shrinks the candidate space."
 updated = "2026-06-11T18:11:21.120Z"
 
 [[record]]
 name = "rng_sequence_interleaved"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "Candidate.rng_sequence is interleaved per mover: (DAMAGE_ROLL, roll),(CRIT, crit) for each mover in observed order, then a trailing (SPEED_TIE). Every mover gets a pair (even non-damaging); multi-hit movers' entries are per-hit tuples."
 updated = "2026-06-11T18:11:21.159Z"
 
 [[record]]
 name = "multi_hit_in_loop"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "Movers enumerated by ONE unified fn _enumerate_mover_rolls (single-hit=n_hits 1, multi-hit=n_hits>1), inside the mover loop at the acting iteration via a PartialCandidate (not a separate phase). apply_hp_prune (n_hits>1 only) gates HP-delta pruning."
 updated = "2026-06-17T15:49:49.895Z"
 
 [[record]]
 name = "crit_attribution_by_message"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "Crits are attributed per-mover by which USEDMOVE directly preceded each CRITICALHIT message (_message_crit_counts_with_state), not a global count by position. Multi-hit moves use their own attributed count for which-hit enumeration."
 updated = "2026-06-11T18:11:36.963Z"
 
 [[record]]
 name = "post_faint_empty_mover_branch"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "provisional"
 rationale = "When movers==[] and an active Pokemon has fainted, run_candidate_sweep runs one sim per action pair directly (no roll/crit enumeration, tie_winner=0) since a bare switch has no controllable RNG. Limitations tracked in TODO 2c."
 updated = "2026-06-11T18:11:37.000Z"
 
 [[record]]
 name = "damage_event_attacker_identity"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_damage.cpp"
 confidence = "settled"
 rationale = "Move-source LogEvent.DAMAGE records attacker_side and attacker_slot so the sweep can attribute damage to the specific attacking mover (own-damage dedup), independent of the target's species."
 updated = "2026-06-11T18:11:37.038Z"
@@ -280,17 +273,10 @@ updated = "2026-06-13T17:50:59.963Z"
 
 [[record]]
 name = "opp_switch_not_boundary"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "requirement"
 rationale = "Opponent faint+replacement is NOT a player decision boundary. Sweep auto-applies observed opponent switch-ins (ordered list, one per faint round, doubles-ready); stops only on player battle menu (AWAIT_ACTIONS) or party-select (switches_needed[0])."
 updated = "2026-06-13T18:34:45.665Z"
-
-[[record]]
-name = "uninjected_rng_filters_cand"
-file = "src/simulation_runner.py"
-confidence = "requirement"
-rationale = "UninjectedRNGError in _run_to_decision_boundary filters the candidate (return None + log once) instead of aborting the sweep: it means the branch diverged from observed reality. All-filtered still raises the no-candidate SimulationError."
-updated = "2026-06-13T18:52:34.861Z"
 
 [[record]]
 name = "ellipsis_stripped_at_parse"
@@ -308,7 +294,7 @@ updated = "2026-06-13T19:08:54.076Z"
 
 [[record]]
 name = "midturn_paralysis_injection"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_secondaries.py"
 confidence = "settled"
 rationale = "Matcher injects FULL_PARALYSIS only on an observed PKMNISPARALYZED message (=False, fully paralyzed). A mon that acted needs no injection: SWEEP_LUCK's silent default is can-act. Old can-act (=True) reconstruction for used/paralyzed slots removed."
 updated = "2026-06-19T15:42:12.051Z"
@@ -336,98 +322,84 @@ updated = "2026-06-13T20:19:38.423Z"
 
 [[record]]
 name = "forced_replace_not_action"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "settled"
 rationale = "_extract_known_actions pairs each faint with the next same-side switch-in (pending_faint counters) and skips it: forced post-faint replacements go via opp_switch_actions, not as actions. Counting twice withdrew the doomed mon pre-faint. Doubles-safe."
 updated = "2026-06-13T22:59:56.371Z"
 
 [[record]]
 name = "multihit_per_hit_sampling"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "settled"
 rationale = "Multi-hit damage discovery samples each hit alone: vary hit i's roll, pin others to min roll so target survives for hit i. Uniform rolls KO early, drop the count, and hide higher per-hit damage. Damage is HP-independent, so isolated rolls recombine."
 updated = "2026-06-13T23:06:29.308Z"
 
 [[record]]
 name = "multihit_ko_overkill"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "settled"
 rationale = "Multi-hit cumulative HP-delta filter: a KO reading (new_val==0) drops the upper bound since the killing blow may overkill; only the lower bound (damage reaches 0) applies. Applies to BOTH opponent pixel-range and player exact-HP branches."
 updated = "2026-06-13T23:12:03.777Z"
 
 [[record]]
-name = "slot_keyed_rng_override"
-file = "src/simulator.py"
-confidence = "settled"
-rationale = "_get_profile(side, source_slot) accepts EVERY _OVERRIDE_MAP event (CRIT, DAMAGE_ROLL, SECONDARY_FIRES, PROC_FIRES, FLINCH, ACCURACY) as a scalar (singles path) OR a dict keyed by active-slot position, so each doubles slot injects its own value."
-updated = "2026-06-14T05:35:52.593Z"
-
-[[record]]
-name = "slot_override_lazy_failloud"
-file = "src/simulator.py"
-confidence = "settled"
-rationale = "Missing slot in a slot-keyed override: _get_profile omits it and drops the event from the strict injected set instead of raising. Fail-loud defers to resolve_crit/resolve_damage_roll, so status moves and queue probes at that slot don't false-fail."
-updated = "2026-06-14T02:00:41.918Z"
-
-[[record]]
 name = "movers_side_slot_tuples"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "settled"
 rationale = "movers is list[tuple[int,int]] of (side, source_slot) in execution order, index-aligned with per-mover rolls/crits/hit_counts. source_slot is the acting active-slot position, inferred from USEDMOVE order via _message_action_order_with_state."
 updated = "2026-06-14T02:00:47.943Z"
 
 [[record]]
 name = "target_slot_from_deltas"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "Doubles target inference: a single-target damaging move's target_slot is constrained to the foe slots that lost HP (turn-order matched). No damage calc; wrong assignments are filtered by the per-slot HP check and fail loud if none survive."
 updated = "2026-06-14T02:00:53.678Z"
 
 [[record]]
 name = "per_mover_multi_hit"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "Supports two multi-hit movers in one doubles turn: mover_hit_counts is a per-mover list[int] index-aligned with movers; entries >1 trigger _enumerate_multi_hit_rolls for that mover. Spread+multi-hit combined is deferred and fails loud."
 updated = "2026-06-14T02:00:53.720Z"
 
 [[record]]
 name = "doubles_secondary_single_move"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "settled"
 rationale = "GAP CLOSED: secondaries are attributed per (side, slot). Messages are segmented by USEDMOVE (names user to source_slot) and effects attributed to the recipient named in the effect message; SECONDARY_FIRES/PROC_FIRES injected as per-slot dicts."
 updated = "2026-06-14T05:35:59.434Z"
 
 [[record]]
 name = "flinch_via_secondary_fires"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_secondaries.py"
 confidence = "requirement"
 rationale = "All move-flinch (flinch-only secondaries and Fang secondary2) resolves via RNGEvent.FLINCH (attacker luck), not SECONDARY_FIRES; forced on hitter slot if observed, else enumerated under FLINCH. SECONDARY_FIRES=status/stat/confusion only."
 updated = "2026-06-15T19:40:22.695Z"
 
 [[record]]
 name = "action_order_from_move_use"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "requirement"
 rationale = "_check_action_order compares observed USEDMOVE order against the side sequence of captured MOVE_USE events, NOT state.turn_order. turn_order includes mons slated to act but that never moved (flinch/para/sleep), mismatching mid-order in doubles."
 updated = "2026-06-14T05:36:33.554Z"
 
 [[record]]
 name = "proc_injection_from_by_msg"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_secondaries.py"
 confidence = "settled"
 rationale = "Ability/item procs (Static etc.) are injected from PKMNWAS*BY status messages: the afflicted name is the LAST var_value (layout [source, ability, target]). PROC_FIRES is forced per-slot on the afflicted target (the attacker for contact-punish)."
 updated = "2026-06-14T05:36:44.352Z"
 
 [[record]]
 name = "secondary_combo_no_cap"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_secondaries.py"
 confidence = "requirement"
 rationale = "No cap on flinch combo count: old guard removed, total combo count printed. Flinch combos keyed per (side, slot, RNGEvent.FLINCH) over non-attributable (flinch-only) movers, excluding slots already force-injected from an observed flinch."
 updated = "2026-06-15T19:40:36.221Z"
 
 [[record]]
 name = "move_use_logs_side"
-file = "src/engine/core.py"
+file = "engine/src/move_exec.cpp"
 confidence = "settled"
 rationale = "LogEvent.MOVE_USE records side=side_idx so the sweep can reconstruct the move-execution order (which mons actually moved) without consulting state.turn_order. Subset-matching consumers (CapturingLogger.fired/all_of) are unaffected by the extra kwarg."
 updated = "2026-06-14T05:37:04.643Z"
@@ -476,7 +448,7 @@ updated = "2026-06-14T06:35:51.573Z"
 
 [[record]]
 name = "confusion_selfhit_midturn"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_secondaries.py"
 confidence = "settled"
 rationale = "Matcher injects CONFUSION_SELF_HIT only on an observed ITHURTCONFUSION message (=False, self-hit). SWEEP_LUCK's silent default is no self-hit, so a confused mon that acted needs no injection. Old PKMNISCONFUSED-keyed no-self-hit reconstruction gone."
 updated = "2026-06-19T15:42:38.539Z"
@@ -518,7 +490,7 @@ updated = "2026-06-14T16:18:17.209Z"
 
 [[record]]
 name = "mirror_damage_side_aware"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "_sum_damage/_per_hit_damages take target_side, filtering DAMAGE events by defender_side (a kwarg on move-damage emissions). Species-only matching conflated mirror actives: a foe's hit on the player counted as opponent damage, pruning all candidates."
 updated = "2026-06-14T16:33:51.576Z"
@@ -532,7 +504,7 @@ updated = "2026-06-14T17:11:56.920Z"
 
 [[record]]
 name = "proc_fires_attacker_side"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_secondaries.py"
 confidence = "settled"
 rationale = "Contact ability procs (_PROC_STATUS_BY_IDS) inject PROC_FIRES on the most-recent move user (attacker), whose luck_atk the roll consumes - not the afflicted mon. Fixes Poison Touch (afflicts defender) pruning all candidates; contact-punish unaffected."
 updated = "2026-06-14T17:48:39.726Z"
@@ -602,73 +574,45 @@ updated = "2026-06-14T19:09:07.693Z"
 
 [[record]]
 name = "hp_deltas_identity_bound"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "Sweep validates HP deltas by mon IDENTITY, not slot. run_candidate_sweep takes hp_deltas: list[HpDeltaSeq] binding (before,after) to (side,species). _check_hp_match resolves species vs result-state team (follows switches); raises if unknown/dup."
 updated = "2026-06-14T21:04:15.491Z"
 
 [[record]]
-name = "exp_part_postfaint_init"
-file = "src/simulator.py"
-confidence = "settled"
-rationale = "start() post-faint path skips _begin_turn, so it must restore turn_ctx.exp_participants from state itself (else a player replacement drops historical EXP participants). Player switch-in preserves; opponent switch-in wipes its slot via _apply_switch."
-updated = "2026-06-14T21:25:45.685Z"
-
-[[record]]
 name = "tib_counts_initiators"
-file = "src/engine/residuals.py"
+file = "engine/src/residuals.cpp"
 confidence = "settled"
 rationale = "turns_in_battle increments at end of turn ONLY for mons active at turn start (ctx.turn_start_active, set in _begin_turn). Mid-turn switch-ins skip the entry turn, so Fake Out/Mat Block/Speed Boost fire on first INITIATED turn. ctx unset => count all."
 updated = "2026-06-14T21:52:37.187Z"
 
 [[record]]
 name = "multihit_stops_on_atk_faint"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_damage.cpp"
 confidence = "settled"
 rationale = "Multi-hit moves end if the attacker faints mid-sequence (e.g. contact recoil like Rough Skin/Rocky Helmet), matching the game's 'Hit N time(s)!' count. Loop breaks on attacker.fainted."
 updated = "2026-06-14T22:26:54.803Z"
 
 [[record]]
 name = "miss_still_acted_inject"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_secondaries.py"
 confidence = "settled"
 rationale = "Matcher injects only VISIBLE failure outcomes; a used move that hit or missed needs no can-act injection. SWEEP_LUCK silent-defaults para/attract/confusion to can-act and accuracy to hit, so acted/missed mons fall through without injection."
 updated = "2026-06-19T15:42:33.246Z"
 
 [[record]]
 name = "confusion_apply_keys_became"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "check_log_events confusion VOLATILE_APPLY constraint keys on STRINGID_PKMNWASCONFUSED ('became confused!'), not PKMNISCONFUSED ('is confused!', per-turn reminder). The reminder fires every turn a confused mon acts; keying on it pruned all candidates."
 updated = "2026-06-14T23:01:19.236Z"
 
 [[record]]
 name = "trust_observed_levelups"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "Sweep trusts OCR PKMNGREWTOLV: level-up check requires sim levels be a sub-multiset of observed (tolerates low live-seed extras, prunes sim-invented); _apply_observed_levelups forces player mons up to observed level so carried state stays consistent."
 updated = "2026-06-15T00:38:29.342Z"
-
-[[record]]
-name = "greedy_policy_module"
-file = "src/greedy_policy.py"
-confidence = "settled"
-rationale = "GreedyPolicy needs the Simulator/search stack, so it lives apart from the I/O-free battle_policy.py. TeamFailureError is raised when no luck tier wins; callers treat the battle as a failure."
-updated = "2026-06-15T05:01:12.372Z"
-
-[[record]]
-name = "mixed_policy_split"
-file = "src/greedy_policy.py"
-confidence = "requirement"
-rationale = "MixedPolicy flips an independent 50/50 coin per decision between greedy and random. stress_test picks pure-greedy vs mixed per battle by a 50/50 coin flip. Prints policy mode per battle and per decision."
-updated = "2026-06-15T05:01:15.841Z"
-
-[[record]]
-name = "driver_shared_helpers"
-file = "src/search/driver.py"
-confidence = "settled"
-rationale = "Loosening/uncontrolled-advance/action-conversion helpers extracted here so run_greedy_search.py and greedy_policy.py share one implementation and stay in lockstep."
-updated = "2026-06-15T05:01:19.370Z"
 
 [[record]]
 name = "stress_failure_outcome"
@@ -678,22 +622,15 @@ rationale = "A team that cannot win the position (no winning luck tier) raises T
 updated = "2026-06-15T05:01:22.877Z"
 
 [[record]]
-name = "converter_int_slot"
-file = "src/search/driver.py"
-confidence = "requirement"
-rationale = "Switch phases (forced/post-faint) return best_action as a plain int bench slot, not an Action (search/engine.py). action_to_move_or_species must handle the int case (-> team[int].species.name), as choose_forced_switch relies on it."
-updated = "2026-06-15T05:23:19.798Z"
-
-[[record]]
 name = "psywave_injectable_roll"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_damage.cpp"
 confidence = "settled"
 rationale = "Psywave damage uses injectable RNGEvent.PSYWAVE_ROLL (0..1) mapped to 50+round(r*100) pct of level damage, mirroring DAMAGE_ROLL; _compute_fixed_damage takes luck_atk. Sweep mirrors s.roll into PSYWAVE_ROLL so its range enumerates like normal damage."
 updated = "2026-06-15T19:40:54.323Z"
 
 [[record]]
 name = "fixed_damage_attacker_identity"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_damage.cpp"
 confidence = "settled"
 rationale = "Fixed-damage DAMAGE logs (Psywave/Counter/Dragon Rage etc.) carry attacker_side/attacker_slot so _own_damage() attributes them; without it all fixed-damage rolls dedup to one and the sweep cannot distinguish candidates."
 updated = "2026-06-15T19:40:59.063Z"
@@ -728,133 +665,133 @@ updated = "2026-06-15T20:23:06.187Z"
 
 [[record]]
 name = "burn_up_drops_fire"
-file = "src/engine/post_hit.py"
+file = "engine/src/post_hit.cpp"
 confidence = "requirement"
 rationale = "Burn Up drops the Fire type entirely (dual-type keeps remaining types; mono-Fire becomes (Type.TYPELESS,), never NORMAL). Emits LogEvent.TYPE_CHANGE source=burn_up with old/new types. (user decisions 2026-06-15)"
 updated = "2026-06-15T20:23:10.124Z"
 
 [[record]]
 name = "dynamic_turn_queue"
-file = "src/engine/core.py"
+file = "engine/src/core_leaf.cpp"
 confidence = "settled"
 rationale = "Turn order is dynamic: after each action the next un-acted actor is re-selected via _select_next_action, recomputing priority bracket + speed from current state (Showdown speedSort). turn_order appended incrementally; QC/Custap resolved at build."
 updated = "2026-06-15T22:11:08.992Z"
 
 [[record]]
 name = "quick_claw_dedicated_event"
-file = "src/engine/core.py"
+file = "engine/src/core_leaf.cpp"
 confidence = "settled"
 rationale = "Quick Claw uses RNGEvent.QUICK_CLAW + quick_claw_threshold (resolve_quick_claw, 20%), decoupled from secondary_threshold. On proc bumps holder to front-of-bracket (speed=9999), gated priority<=0, emits QUICK_CLAW_ACTIVATE. Custap stays deterministic."
 updated = "2026-06-15T22:11:29.249Z"
 
 [[record]]
 name = "quick_claw_observed_pinning"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "settled"
 rationale = "Quick Claw observed via STRINGID_QUICKCLAWACTIVATE: pin QUICK_CLAW=True per holder slot when seen, else False for QC holders that used a priority<=0 move with no QC message (always shown on proc). Keyed on used-priority0 slots only. No enumeration."
 updated = "2026-06-15T22:11:47.849Z"
 
 [[record]]
 name = "struggle_recoil"
-file = "src/engine/post_hit.py"
+file = "engine/src/post_hit.cpp"
 confidence = "requirement"
 rationale = "Struggle recoil = max(1, user.max_hp//4), a dedicated post_hit branch (MOVE_DATA recoil stays None). Magic Guard blocks it; Rock Head does NOT (matches Showdown struggleRecoil). Logged DAMAGE source=recoil. (user decisions 2026-06-15)"
 updated = "2026-06-15T22:41:00.571Z"
 
 [[record]]
 name = "battle_start_sendout_forced"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "settled"
 rationale = "_extract_known_actions skips both sides' send-outs when STRINGID_INTROMSG is in the batch: opening lead-ins are forced, not voluntary. Recording them tripped the opponent-action filter (switch p=0 vs move preds) and crashed the sweep."
 updated = "2026-06-16T17:21:47.081Z"
 
 [[record]]
 name = "hitcount_side_attrib"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "settled"
 rationale = "HITXTIMES count filters HITCOUNT by attacker SIDE (USEDMOVE 'Foe' prefix via _msg_is_foe), not species alone; species-only conflated both mons in same-species mirrors. core.py logs HITCOUNT with side=side_idx."
 updated = "2026-06-16T17:21:51.466Z"
 
 [[record]]
 name = "opp_action_filter"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "requirement"
 rationale = "_validate_known_opponent_action filters a candidate if an OCR-identified opponent action had p=0 in compute_action_probabilities (per-candidate UnexpectedOpponentActionError; all-filtered => no survivors). Surfaces AI prediction gaps as crashes."
 updated = "2026-06-16T17:21:55.172Z"
 
 [[record]]
 name = "battle_start_no_enum"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "Opening sweep (STRINGID_INTROMSG) short-circuits: neither side acted, so emit each lead state unchanged as one child candidate, no enumeration/sim. Enumeration invented opponent switch->bench branches that diverged observed active, crashing sweep."
 updated = "2026-06-16T18:05:03.585Z"
 
 [[record]]
 name = "multi_hit_aware_damage"
-file = "src/queries.py"
+file = "engine/src/ai_damage.cpp"
 confidence = "requirement"
 rationale = "Query+AI KO/damage decisions must use expected_damage (multi-hit aware), not single-hit calculate_damage; calculate_damage stays single-hit for the engine's per-hit loop. Undercounting Double Slap made the AI mispredict and crash the sweep."
 updated = "2026-06-16T18:47:39.773Z"
 
 [[record]]
 name = "setup_routing_self_only"
-file = "src/ai.py"
+file = "engine/src/ai_scorer_dist.cpp"
 confidence = "requirement"
 rationale = "Offensive-setup scoring (_dist_setup via SETUP+STATUS tag) only applies to target==SELF moves. Opponent-targeting moves (Swagger, Flatter, Curse, Decorate) are confusion/debuffs, not self-buffs; routing them as setup gave p=0 and crashed the sweep."
 updated = "2026-06-16T19:16:00.953Z"
 
 [[record]]
 name = "kill_bonus_joint_highest"
-file = "src/ai.py"
+file = "engine/src/ai_scorer_dist.cpp"
 confidence = "requirement"
 rationale = "KO bonus is computed jointly with highest-damage odds on the same damage roll (correlated), using uncapped damage for KO. Kill bonus applies only when the move is also highest-damage. Replaces the buggy max-roll guaranteed-kill flag."
 updated = "2026-06-16T20:43:40.476Z"
 
 [[record]]
 name = "belch_excluded_from_rank"
-file = "src/ai.py"
+file = "engine/src/ai_damage.cpp"
 confidence = "requirement"
 rationale = "Belch is skipped in _build_damage_context when consumed_berry==NONE (unusable per engine core.py:1571), so it falls to the status-branch scorer instead of being ranked at 120 BP and predicted as the opponent's move."
 updated = "2026-06-16T22:58:54.286Z"
 
 [[record]]
 name = "analytical_joint_roll_enum"
-file = "src/ai.py"
+file = "engine/src/ai_analytic.cpp"
 confidence = "settled"
 rationale = "compute_action_probabilities enumerates all 16^m damage-roll combos using the same capped-rank/uncapped-kill formula as _sample_highest_slots, so analytical and sim paths agree. Co-highest moves share p_highest; switches excluded from enumeration."
 updated = "2026-06-16T22:59:02.482Z"
 
 [[record]]
 name = "voluntary_switch_single_tgt"
-file = "src/ai.py"
+file = "engine/src/ai_scorer.cpp"
 confidence = "requirement"
 rationale = "Voluntary switch gives the full 0.5 to ONE Cond2-filtered post-KO target (not split across benches); switches get 0 otherwise. HP gate is >=50% (not strict >). Target selection replicates the found_faster Cond2 bug."
 updated = "2026-06-16T22:59:03.927Z"
 
 [[record]]
 name = "forced_switch_post_ko_check"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "requirement"
 rationale = "Forced post-faint opponent switch-ins (fainted active) skip the beginning-of-turn compute_action_probabilities check; _validate_forced_opponent_switch strictly asserts send-out equals select_post_ko_switch (singles only)."
 updated = "2026-06-16T23:35:08.189Z"
 
 [[record]]
 name = "per_roll_damage_index_override"
-file = "src/engine/damage.py"
+file = "engine/src/damage.cpp"
 confidence = "settled"
 rationale = "calculate_damage takes opt-in roll_index (0..15) for an exact roll; roll applied before STAB/type with flooring, so per-roll damage is nonlinear (Wing Attack 8x15 then 12), not a linear rescale of max. Default callers unchanged."
 updated = "2026-06-17T01:23:54.357Z"
 
 [[record]]
 name = "ai_true_per_roll_damage"
-file = "src/ai.py"
+file = "engine/src/ai_damage.cpp"
 confidence = "settled"
 rationale = "AI scoring uses true 16-element per-roll damage arrays from damage_roll_values, not max_damage*(85+r)//100 rescale. The old rescale collapsed low rolls upward, hiding marginal-KO branches and giving status moves p=0 (crashed sweeps)."
 updated = "2026-06-17T01:23:58.855Z"
 
 [[record]]
 name = "harvest_proc_side_hint"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_secondaries.py"
 confidence = "settled"
 rationale = "HARVESTADDITEM message forces harvester PROC_FIRES=True so the berry-restored (item present) candidate survives the sweep; uses side_hint to disambiguate mirror species."
 updated = "2026-06-17T04:08:25.765Z"
@@ -868,21 +805,21 @@ updated = "2026-06-17T05:13:36.977Z"
 
 [[record]]
 name = "attract_midturn_can_act"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_secondaries.py"
 confidence = "settled"
 rationale = "Matcher injects ATTRACT_IMMOBILIZE only on an observed PKMNIMMOBILIZEDBYLOVE message (=False, immobilized). SWEEP_LUCK's silent default is can-act, so an infatuated mon that acted needs no injection. Old PKMNINLOVE-keyed can-act reconstruction gone."
 updated = "2026-06-19T15:42:38.596Z"
 
 [[record]]
 name = "multihit_heal_segmenting"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "HP-delta walk segments bar readings at heal deltas (to>from): a heal resets the cumulative anchor, consumes no hit. Heal legitimacy is NOT judged here (no message-count guard); _hp_count_detail decides via observed-vs-sim HP-delta sequence match."
 updated = "2026-06-23T20:15:31.122Z"
 
 [[record]]
 name = "fixed_damage_hd_ranking"
-file = "src/ai.py"
+file = "engine/src/ai_scorer_dist.cpp"
 confidence = "requirement"
 rationale = "Proactive fixed-damage moves (Sonic Boom, Dragon Rage, Seismic Toss, Night Shade, Super Fang, Nature's Madness, Psywave) rank in HD/KO by flat value despite no DAMAGE tag; type-immune target scores -40. Reactive ones keep their own branches."
 updated = "2026-06-17T14:29:55.721Z"
@@ -896,14 +833,14 @@ updated = "2026-06-17T14:45:49.969Z"
 
 [[record]]
 name = "mover_damage_attacker_keyed"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "Per-hit damage discovery keys on the ATTACKER (side+team-slot) via _attacker_per_hit_damages, not the defender's pre-turn species. Switch-robust: a mid-turn switch-in leaves the old species stale; the attacker is fixed. Single+multi-hit both use it."
 updated = "2026-06-17T15:50:16.798Z"
 
 [[record]]
 name = "single_hit_scalar_override"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "Single-hit movers (n_hits 1) drive the sim via SCALAR roll/crit, storing scalar roll+bool crit; per-hit tuple overrides don't control fixed-damage random (Psywave). Single-hit crit_count clamps to 0/1 (spread moves crit many targets, roll crit once)."
 updated = "2026-06-17T15:50:33.964Z"
@@ -917,7 +854,7 @@ updated = "2026-06-17T15:58:33.724Z"
 
 [[record]]
 name = "EXP_GAIN logs gross"
-file = "src/engine/exp.py"
+file = "engine/src/exp.cpp"
 confidence = "settled"
 rationale = "Game 'gained X Exp' message shows gross calc_exp_gain, not cap-clamped net. When a mon crosses into the level cap, stored EXP is clamped below gross; log gross (net>0) so the reconciler's EXP-amount match works. Already-capped mons (net 0) log 0."
 updated = "2026-06-17T16:08:48.972Z"
@@ -931,17 +868,10 @@ updated = "2026-06-17T16:27:18.966Z"
 
 [[record]]
 name = "perslot_acted_doubles"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_secondaries.py"
 confidence = "settled"
 rationale = "Per-mon message-driven overrides (FULL_PARALYSIS, ACCURACY, ATTRACT_IMMOBILIZE, CONFUSION_SNAP/SELF_HIT, MULTI_HIT_COUNT) written per-slot keyed by acting slot in doubles, scalar in singles. Global scalar let two same-turn movers clobber each other."
 updated = "2026-06-19T15:42:53.604Z"
-
-[[record]]
-name = "multi_hit_count_perslot"
-file = "src/simulator.py"
-confidence = "settled"
-rationale = "The MULTI_HIT_COUNT override branch calls _resolve_slot so per-slot dict values dispatch by source_slot (scalars still pass through for singles). Without it, doubles two-multihit-mover turns could not carry distinct per-mover hit counts."
-updated = "2026-06-17T17:58:15.028Z"
 
 [[record]]
 name = "prev_turn_order_field"
@@ -952,28 +882,28 @@ updated = "2026-06-18T18:26:08.113Z"
 
 [[record]]
 name = "ai_scoring_view_prev_turn"
-file = "src/engine/damage.py"
+file = "engine/src/damage.cpp"
 confidence = "requirement"
 rationale = "calculate_damage's ai_scoring_view replicates Bug #8: when True, Analytic (1.3x) is judged by prev_turn_order, not the current turn. Engine default False stays current-turn-correct (core.py _compute_variable_bp is the engine path)."
 updated = "2026-06-18T18:26:34.965Z"
 
 [[record]]
 name = "ai_damage_prev_turn_screens"
-file = "src/queries.py"
+file = "engine/src/ai_damage.cpp"
 confidence = "requirement"
 rationale = "expected_damage drives AI scoring with ai_scoring_view=True: Analytic/Payback/Bolt Beak/Fishious Rend judged by prev_turn_order (Bug #8). Also passes def_side_idx so screens+Friend Guard now apply in AI scoring (in-game calc factors screens)."
 updated = "2026-06-18T18:26:46.604Z"
 
 [[record]]
 name = "rollout_switch_in_480bp"
-file = "src/queries.py"
+file = "engine/src/ai_damage.cpp"
 confidence = "requirement"
 rationale = "rollout_max_bp (on expected_damage/can_ko/best_damage_move) reads Rollout at max 480 BP, replicating Bug #25 (switch-in AI sees Rollout as 480 BP). Passed True ONLY by switch scoring, ONLY for Rollout; active-move scoring stays flat +7."
 updated = "2026-06-18T18:26:57.576Z"
 
 [[record]]
 name = "coaching_doubles_scoring"
-file = "src/ai.py"
+file = "engine/src/ai_scorer_dist.cpp"
 confidence = "requirement"
 rationale = "Coaching: -20 in singles / no living partner / Contrary partner. Doubles with valid partner: score=6+sum(1-stage for partner Atk[0],Def[1] where stage<2), returned as [(score,0.20),(score+1,0.80)]. Proper distribution, never assigns p=0."
 updated = "2026-06-18T18:27:00.805Z"
@@ -987,28 +917,28 @@ updated = "2026-06-18T18:27:06.393Z"
 
 [[record]]
 name = "status_move_semi_invuln_miss"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_guards.cpp"
 confidence = "requirement"
 rationale = "Opponent-targeting STATUS moves miss a semi-invuln target (emit MOVE_MISS) like the damaging path. No Guard (either side) bypasses the miss on both paths and the Magic Bounce branch. Other bypasses (Toxic/Gust/Thunder/Gravity) are out of scope."
 updated = "2026-06-18T20:08:03.127Z"
 
 [[record]]
 name = "status_type_immune_electric"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_guards.cpp"
 confidence = "requirement"
 rationale = "Type-chart immunity for STATUS moves is scoped to Electric moves vs Ground (Thunder Wave) only. Broader 0x type immunity is intentionally NOT applied to status moves (Ghost Curse vs Normal still works). Mold Breaker does not bypass type immunity."
 updated = "2026-06-18T20:08:12.992Z"
 
 [[record]]
 name = "status_substitute_gate"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_guards.cpp"
 confidence = "requirement"
 rationale = "Opponent-targeting STATUS effects are blocked by an active Substitute, bypassed only by SOUND-tagged moves, the Infiltrator ability, and Move.PLAY_NICE (its documented special case). Growl is SOUND-tagged so it bypasses Sub."
 updated = "2026-06-18T20:08:16.455Z"
 
 [[record]]
 name = "status_path_guard_parity"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_guards.cpp"
 confidence = "settled"
 rationale = "STATUS path mirrors the damaging _pdg_ guards to avoid sweep crashes: last_move_failed reset+set-on-miss, evasion/accuracy items (Bright Powder/Wide Lens/Sand Veil/Snow Cloak/Tangled Feet/Victory Star), priority blocks (Psychic Terrain, Dazzling/QM)."
 updated = "2026-06-18T20:08:33.077Z"
@@ -1021,22 +951,8 @@ rationale = "Shadow Force, Lock On, and Mind Reader do not appear in this game a
 updated = "2026-06-18T20:08:37.240Z"
 
 [[record]]
-name = "naive_matchup_cache_key"
-file = "src/nn/matchup.py"
-confidence = "settled"
-rationale = "Cache key=full attacker+defender PokemonState (HP INCLUDED: pinch/Defeatist/Multiscale make damage HP-dependent)+side idxs+build_sig. _field_sig strips per-turn timers so bench edges reuse cross-turn; folds active ability/item for Air Lock/rooms."
-updated = "2026-06-19T03:12:47.474Z"
-
-[[record]]
-name = "greedy_clean_win_invariant"
-file = "src/greedy_policy.py"
-confidence = "requirement"
-rationale = "GreedyPolicy._search commits only to clean wins: found_win AND best_score==20-20*root_faints (no NEW faints; relative so forced-switch positions with prior faints pass). Else raise GreedyInvariantError (not TeamFailureError) with debug context."
-updated = "2026-06-19T05:57:22.477Z"
-
-[[record]]
 name = "fuzzy_match_display_name"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_driver.py"
 confidence = "settled"
 rationale = "OCR-name fuzzy matching vs species must use emulator_species_name() (base display name for forms), NOT raw species.name, else ZIGZAGOON_GALAR fails to match OCR 'ZIGZAGOON'. Sites: _resolve_attacker_slot, status-recipient loop, _species_name_matches."
 updated = "2026-06-19T06:15:59.832Z"
@@ -1057,122 +973,24 @@ updated = "2026-06-19T07:24:09.494Z"
 
 [[record]]
 name = "two_turn_pp_charge_only"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_premove.cpp"
 confidence = "settled"
 rationale = "Two-turn moves spend PP only on the charge turn. PP block gated by _two_turn_release (charging_move_slot==effective_slot, still set on release turn before _handle_pre_damage_checks clears it). Stops inferred opp PP draining 2x."
 updated = "2026-06-19T07:45:37.845Z"
 
 [[record]]
 name = "fake_out_bonus_stacks"
-file = "src/ai.py"
+file = "engine/src/ai_scorer_dist.cpp"
 confidence = "requirement"
 rationale = "Fake Out scores as a normal damaging move (HD odds + kill bonus) with +9 STACKED on top (like Acid Spray's +6) when first-turn, target lacks Shield Dust/Inner Focus, and not type-immune; else -40. Flat +9 made a KOing Fake Out lose to rival KO moves."
 updated = "2026-06-19T16:55:47.482Z"
 
 [[record]]
-name = "greedy_prune_player_faints"
-file = "src/search/search.py"
-confidence = "requirement"
-rationale = "GreedySearch blocks any child whose player faint count exceeds the root baseline: such nodes are never explored or returned as wins. A faint-ful win is not a clean win, so found_win stays False and the driver loosens RNG then gives up."
-updated = "2026-06-19T17:10:18.932Z"
-
-[[record]]
 name = "player_damage_no_crit"
-file = "src/ai.py"
+file = "engine/src/ai_scorer.cpp"
 confidence = "requirement"
 rationale = "AI player-damage threat checks never assume crits (AI.md de-crits the player's highest roll). Recovery/nhko/Belly Drum use AVERAGE_LUCK; post-KO switch checks use _MAX_DAMAGE_LUCK to match neighbors. GOOD_LUCK (forced crit) removed."
 updated = "2026-06-19T17:32:30.793Z"
-
-[[record]]
-name = "bootstrap_value_policy_targets"
-file = "src/nn/labeling.py"
-confidence = "settled"
-rationale = "Each undecided non-terminal child gets a bootstrap policy target = its child's value (weight 0.2). If that action has >=10 descendants it ALSO gets a soft-negative 0.5^((desc+90)/100), weight 0.2. Both co-exist. All on the [0,1] win-prob scale."
-updated = "2026-06-20T03:10:45.927Z"
-
-[[record]]
-name = "ability_learned_embedding"
-file = "src/nn/spec.py"
-confidence = "requirement"
-rationale = "Abilities = 32-d learned nn.Embedding (vocab=all Ability), NOT effect-primitive decomposition (mapping too costly, failed loud on unmapped). Default std init per user. SPEC_VERSION=2; effect_primitives ABIL_* kept to keep N_PRIM stable."
-updated = "2026-06-19T19:30:39.449Z"
-
-[[record]]
-name = "spawn_pool_cpu_workers"
-file = "src/nn/parallel_label.py"
-confidence = "settled"
-rationale = "Label workers use a SPAWN pool (not fork: parent inits CUDA; fork-after-CUDA unsafe). Spawn also lets each worker init its own CUDA context, so NN forward runs on GPU when worker_device=cuda (label/train phases don't overlap). Weights via CPU ckpt."
-updated = "2026-06-19T19:39:19.112Z"
-
-[[record]]
-name = "estimated_damage_rolls"
-file = "src/nn/matchup.py"
-confidence = "settled"
-rationale = "Matchup-LOCAL fast path: 1 engine call for the factor-100 max roll (idx 15), other 15 estimated as max*(85+r)//100. ~17x fewer damage calls, ~1-2 HP error. queries/engine stay full-fidelity for search; only NN features estimate."
-updated = "2026-06-19T19:39:19.001Z"
-
-[[record]]
-name = "closed_form_turns_to_ko"
-file = "src/nn/matchup.py"
-confidence = "settled"
-rationale = "_turns_to_ko is closed-form: exact OHKO check then ceil(hp/net_loss), loss=damage minus eot residual. Toxic approximated as CONSTANT (toxic_turns+1)/16*max_hp (not its ramp) to keep the divisor constant; error small unless KO is slow."
-updated = "2026-06-19T19:39:19.055Z"
-
-[[record]]
-name = "content_addressed_token_cache"
-file = "src/nn/token_builder.py"
-confidence = "settled"
-rationale = "MonTokenCache memoizes per-mon tokens on (mon, is_active) content, mirroring NaiveMatchupCache. Bench mons are unchanged across nodes, so token_build drops ~11s to ~0.6s (98% hit). Threaded parallel to the matchup cache; off by default (None)."
-updated = "2026-06-19T20:04:47.573Z"
-
-[[record]]
-name = "batched_worst_case_scoring"
-file = "src/search/engine.py"
-confidence = "settled"
-rationale = "_worst_over/expand_node fork+advance all candidate leaves first, then score them in ONE heuristic.score_many call (NN forward batched per worst-case set). First-argmin worst pick preserved exactly. Heuristic-agnostic via getattr fallback to score."
-updated = "2026-06-19T20:25:35.850Z"
-
-[[record]]
-name = "iterate_fresh_labels_only"
-file = "src/nn/iterate.py"
-confidence = "requirement"
-rationale = "User: train ONLY on each round's fresh labels; no positive buffer, nothing persists between rounds. Positives AND negatives regenerate every round with the current model, so the value head sees balanced win/loss verdicts, not stale buffered wins."
-updated = "2026-06-20T03:10:30.613Z"
-
-[[record]]
-name = "player_move_rules"
-file = "src/nn/battle_gen.py"
-confidence = "requirement"
-rationale = "Player movesets: level-up moves at/below current level full weight, TM and tutor moves HALF weight, NO egg moves. Opponent gets ALL moves (level-up regardless of level, TM, tutor, egg) at full weight. User decision."
-updated = "2026-06-20T20:23:28.094Z"
-
-[[record]]
-name = "natures_ivs"
-file = "src/nn/battle_gen.py"
-confidence = "requirement"
-rationale = "Player random nature; opponent optimized nature (ADAMANT/JOLLY if physical, MODEST/TIMID if special, chosen via rng). IVs all 31 both sides. User decision."
-updated = "2026-06-20T20:23:28.140Z"
-
-[[record]]
-name = "ability_rules"
-file = "src/nn/battle_gen.py"
-confidence = "requirement"
-rationale = "Player draws only from NORMAL abilities (no hidden); opponent draws from normal+hidden. Ability JSON is structured {normal,hidden} to support this gating. User decision."
-updated = "2026-06-20T20:23:28.226Z"
-
-[[record]]
-name = "difficulty_band_knob"
-file = "src/nn/curriculum.py"
-confidence = "requirement"
-rationale = "Target a win-prob band (~0.35-0.65 centered, with tails) via the model's own value head. Anchor player team level; perturb ONLY opponent levels to hit the band. User decision."
-updated = "2026-06-20T20:23:48.262Z"
-
-[[record]]
-name = "coverage_quota_hybrid"
-file = "src/nn/curriculum.py"
-confidence = "requirement"
-rationale = "Cover ALL items/abilities/pokemon/moves on BOTH sides across all 9 luck tiers. Quota hybrid: when coverage conflicts with edge-difficulty, coverage wins (forced battle ignores band until quota met). User decision."
-updated = "2026-06-20T20:23:48.307Z"
 
 [[record]]
 name = "gen_training_source"
@@ -1180,20 +998,6 @@ file = "SCRIPTS/nn_iterative_train.py"
 confidence = "requirement"
 rationale = "Generated battles REPLACE fixed fixtures as training source; real fixtures (Test3) are validation-only. Curriculum label_fn generates a fresh batch each round from the current model's value head so difficulty adapts. User decision."
 updated = "2026-06-20T20:23:48.351Z"
-
-[[record]]
-name = "item_rules"
-file = "src/nn/battle_gen.py"
-confidence = "requirement"
-rationale = "Opponents ALWAYS hold an item; players 20% none. Pool restricted to items with real in-battle effect (battle berries, gems, standard battle items, Mega Stones on holder only); other species items excluded. GENERAL_ITEMS=122."
-updated = "2026-06-20T20:23:52.174Z"
-
-[[record]]
-name = "controls_validated"
-file = "src/nn/curriculum.py"
-confidence = "settled"
-rationale = "Stage 5 (SCRIPTS/validate_curriculum_difficulty.py): opp-level knob yields a monotonic difficulty gradient via the non-NN Greedy oracle (offset -20 wins at strictest tier; +20 wins ~37%, only at favorable tiers). Controls sound; no tuning needed."
-updated = "2026-06-20T20:24:07.170Z"
 
 [[record]]
 name = "gap_species_manual"
@@ -1204,7 +1008,7 @@ updated = "2026-06-21T00:15:56.361Z"
 
 [[record]]
 name = "struggle_no_pp_spend"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_premove.cpp"
 confidence = "settled"
 rationale = "Struggle/recharge spend no PP: _consume_pp raises on slot<0; PP block guards slot>=0. Priority<0=0. Recharge branch stays ==-1 so Struggle flows to execution (move=move_override). Sucker Punch reads move_override so it succeeds vs Struggle."
 updated = "2026-06-21T18:20:57.493Z"
@@ -1225,14 +1029,14 @@ updated = "2026-06-21T20:57:12.692Z"
 
 [[record]]
 name = "faint hp disambig"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "_check_hp_match same-species: a delta ending at 0 (faint) prefers the matching mon with hp==0, not the active-slot mon. A same-species faint+replacement puts the replacement in the active slot, so slot matching falsely rejects the faint (Issue 29)."
 updated = "2026-06-21T20:57:27.510Z"
 
 [[record]]
 name = "per-survivor prune log"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "Sweep failure diagnostic lists, per surviving candidate, the stage it died at (HP vs LOG) and mismatch values via _hp_match_detail. The old 'first HP fail' printed the active-slot opp HP (a replacement's bar on faint turns), which misled Issue 29."
 updated = "2026-06-21T20:57:41.165Z"
@@ -1246,49 +1050,49 @@ updated = "2026-06-21T20:58:08.157Z"
 
 [[record]]
 name = "called_move_collapse_general"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "settled"
 rationale = "Metronome AND Sleep Talk collapse via _collapse_metronome_calls (shared 2-USEDMOVE/1-MOVE_USE shape); injection routes to METRONOME_MOVE or SLEEP_TALK_MOVE keyed on the wrapper via _CALLED_MOVE_EVENTS. Add new wrappers to that map, not a parallel fn."
 updated = "2026-06-22T22:17:40.445Z"
 
 [[record]]
 name = "action_order_prefix_floor"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "settled"
 rationale = "_check_action_order requires sim MOVE_USE sides == observed prefix AND len(sim)>=len(observed). Sim is legitimately LONGER (MOVE_USE for unobserved opponent moves), so only a SHORTER sim prunes. Collapse called-move wrappers first or 2:1 over-prunes."
 updated = "2026-06-22T22:17:55.939Z"
 
 [[record]]
 name = "single_hit_no_enum_constraint"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "settled"
 rationale = "Single-hit movers keep ALL damage values at enum time; only multi-hit applies the per-hit cumulative constraint. Enum sim omits final-sim secondary RNG, so a single-hit enum constraint false-over-prunes (B1 pt2 deferred)."
 updated = "2026-06-23T20:15:36.391Z"
 
 [[record]]
 name = "dedup_by_state_not_hash"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "settled"
 rationale = "Sweep candidate dedup stores BattleState objects in a set (collision-proof via __eq__), NOT hash(rs) ints. A 64-bit hash collision would silently drop a distinct candidate (F2). Don't revert to storing hashes."
 updated = "2026-06-22T22:18:15.734Z"
 
 [[record]]
 name = "event_side_attribution"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "check_log_events attributes STATUS/STAT_BOOST/VOLATILE events by matching engine event side (=side_idx) vs the observed side from _msg_is_foe ('Foe ' prefix) plus species via emulator_species_name. Collision-proof in mirrors; keep the side filter."
 updated = "2026-06-22T22:18:27.316Z"
 
 [[record]]
 name = "slot_map_single_pass"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "settled"
 rationale = "One _build_attacker_slot_map cursor pass assigns (side,slot) per USEDMOVE msg id; consumers do slot_map.get(id(msg)) and SKIP on miss (no per-consumer cursor). Prevents action-extraction vs order-validation cursor disagreement (D3 parity)."
 updated = "2026-06-22T22:18:36.683Z"
 
 [[record]]
 name = "unreproducible_move_filter"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "settled"
 rationale = "C1: an observed move not in the moveset/legal actions raises UnreproducibleObservedMoveError, caught per-candidate in run_candidate_sweep (print+continue), not dropped. C2: switch-in to unknown team slot hard-raises SimulationError (roster desync)."
 updated = "2026-06-22T22:18:52.498Z"
@@ -1309,28 +1113,28 @@ updated = "2026-06-22T22:19:07.926Z"
 
 [[record]]
 name = "opp_no_change_all_slots"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "check_log_events no-opponent-deltas guard sums ALL move damage to defender_side=1 (_total_side_move_damage), not just opp_species/slot-0, so doubles slot-1 opponents of another species are constrained (E2). opp_species kept as known-opponent gate."
 updated = "2026-06-22T22:53:06.423Z"
 
 [[record]]
 name = "damage_attacker_slot_via_swap"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_damage.cpp"
 confidence = "settled"
 rationale = "Move-damage DAMAGE uses attacker_slot=active_indices[0]; CORRECT in doubles because _handle_damage_loop runs inside _active_slot_swapped(side, source_slot), swapping the acting mon's team index into slot 0. Do not 'fix' to a hardcoded slot (G1)."
 updated = "2026-06-22T22:53:25.319Z"
 
 [[record]]
 name = "berry_consume_corroboration"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "check_log_events matches observed berry-restore messages (berry-only string ids) one-for-one per side vs sim HEAL source='berry', pruning rolls that trip/skip a berry even when final HP coincides (B1 pt2). Side via msg.side_hint."
 updated = "2026-06-23T00:16:58.787Z"
 
 [[record]]
 name = "berry_heal_side_kwarg"
-file = "src/engine/_helpers.py"
+file = "engine/src/effects.cpp"
 confidence = "settled"
 rationale = "_check_berry emits HEAL with side=side_idx so check_log_events can attribute berry consumption per side (mirror-safe) for the berry-restore corroboration constraint."
 updated = "2026-06-23T00:17:02.094Z"
@@ -1344,7 +1148,7 @@ updated = "2026-06-23T01:00:16.878Z"
 
 [[record]]
 name = "natgift_no_berry_spends_pp"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_premove.cpp"
 confidence = "requirement"
 rationale = "No-berry Natural Gift executes and fails, so it spends PP (Gen 4/5), unlike pre-execution blocks (sleep). Skipping PP stalled the engine: only-PP-move loops forever, never forced to Struggle. Called moves/Dancer pay no slot PP."
 updated = "2026-06-23T04:08:34.739Z"
@@ -1358,7 +1162,7 @@ updated = "2026-06-23T04:08:44.570Z"
 
 [[record]]
 name = "cheek_pouch_corroboration"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "Cheek Pouch shares berries' generic restore strings; only its source-name var distinguishes it. Engine logs it source=cheek_pouch with side=. Corroboration buckets restore msgs by var, matching source=berry and cheek_pouch separately per side."
 updated = "2026-06-23T05:23:01.468Z"
@@ -1372,66 +1176,52 @@ updated = "2026-06-23T14:18:12.083Z"
 
 [[record]]
 name = "ambiguity_reduce_then_fanout"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "settled"
 rationale = "Same-species ambiguity is reduced then fanned out into branches pruned by validation: switch-ins via _opponent_switch_in_actions->list[tuple], attackers via _build_attacker_slot_maps->list[dict]. Capped at _SWEEP_BRANCH_CAP=1000, fail loud."
 updated = "2026-06-23T14:18:15.558Z"
 
 [[record]]
 name = "recipient_slot_hp_reduction"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "settled"
 rationale = "_slot_for_name reduces same-species recipient ambiguity by per-slot HP delta (flinch/damage recipient changed HP), else raises. _inject_non_move_rng resolves attacker pos via slot_map for doubles parity, not the raising _slot_for_name."
 updated = "2026-06-23T14:18:19.342Z"
 
 [[record]]
 name = "hp_delta_count_check"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "Sweep checks COUNT of HP-bar transitions (observed vs sim), not just endpoint, to catch a phantom/extra residual tick a value-only check hides. Player=exact HP, opp=k-pixel. Consistency guard SKIPs (never false-prunes) on unaccounted HP changes."
 updated = "2026-06-23T15:10:31.641Z"
 
 [[record]]
 name = "wrap_release_override"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "Observed PKMNFREEDFROM ('freed from Wrap') is ground truth: _apply_observed_wrap_release clears BOUND+BOUND_SOURCE_SLOT on the named mon at turn start so a too-long carried duration roll can't keep it trapped or add a tick. Needs Foe side_hint."
 updated = "2026-06-23T15:10:56.112Z"
 
 [[record]]
 name = "centralized_opponent_faint_exp"
-file = "src/engine/exp.py"
+file = "engine/src/exp.cpp"
 confidence = "requirement"
 rationale = "Opponent-faint EXP triggers from the faint itself, not a move/event path. flush_opponent_faint_exp scans side-1 active mons for fainted ones, called per causing-event. Simultaneous player faint => no EXP (skips fainted winners). Idempotent."
 updated = "2026-06-23T16:50:45.760Z"
 
 [[record]]
 name = "move_exp_flush_after_recoil"
-file = "src/engine/core.py"
+file = "engine/src/move_exec.cpp"
 confidence = "requirement"
 rationale = "Move-action opponent KOs award EXP via _flush_opponent_faint_exp at end of _execute_action, after the move body (incl. recoil) resolves. Covers attacker self-KO (Struggle/Double-Edge recoil) old inline paths missed. Switch path flushes too."
 updated = "2026-06-23T16:50:57.347Z"
 
 [[record]]
 name = "residual_exp_flush_points"
-file = "src/engine/residuals.py"
+file = "engine/src/residuals.cpp"
 confidence = "requirement"
 rationale = "Residual KOs award EXP after each battler's per-battler chain + after Future Sight; no inline distribute_exp. Residual flushes use allow_fainted_winners=True so a player fainted earlier keeps EXP from a later opponent KO. Idempotent, no double-award."
 updated = "2026-06-25T17:54:35.055Z"
-
-[[record]]
-name = "opp_prob_print_module"
-file = "src/opponent_probs.py"
-confidence = "settled"
-rationale = "_print_opponent_probs/_action_str live in standalone src/opponent_probs.py so the policy-agnostic turn loop (handle_battle_screen) prints opponent action probs EVERY turn, not just under greedy. Greedy no longer calls it (avoids double-print)."
-updated = "2026-06-23T20:15:52.026Z"
-
-[[record]]
-name = "Cross-check threshold"
-file = "src/calc_crosscheck.py"
-confidence = "requirement"
-rationale = "User spec: engine move-slot probs (renormalised over moves; switch/recharge dropped) vs syl-rnb-calc generateMoveDist; any per-slot abs diff > 0.01 dumps JSON and raises CrossCheckError (crash run). Skip boundaries with no voluntary opponent move."
-updated = "2026-06-24T05:47:51.388Z"
 
 [[record]]
 name = "Persistent calc server"
@@ -1442,80 +1232,73 @@ updated = "2026-06-24T05:47:56.040Z"
 
 [[record]]
 name = "residual_per_battler_order"
-file = "src/engine/residuals.py"
+file = "engine/src/residuals.cpp"
 confidence = "settled"
 rationale = "Residuals process per-battler in fixed Speed order (fastest first); each battler runs its full chain (_BAND_TABLE + _LATE_PER_SLOT_HANDLERS, stop on faint) before the next. Within-battler order unchanged. Matches Emerald; fixes Unnerve phantom-heal."
 updated = "2026-06-25T17:54:32.153Z"
 
 [[record]]
 name = "residual_order_fixed"
-file = "src/engine/residuals.py"
+file = "engine/src/residuals.cpp"
 confidence = "provisional"
 rationale = "Per-battler residual order computed ONCE at phase start; mid-phase speed changes (Speed Boost) do NOT reorder remaining battlers this turn. Chosen for simplicity; unconfirmed vs dynamic order. Revisit if a dynamic-order case appears."
 updated = "2026-06-25T17:54:33.578Z"
 
 [[record]]
 name = "faint_active_canonical_setter"
-file = "src/engine/_helpers.py"
+file = "engine/src/orchestrate.cpp"
 confidence = "requirement"
 rationale = "All faint sites route through faint_active(sides,side_idx,*,notify_soul_heart,slot). Idempotent (early-return if fainted). Does NOT own log(FAINT); callers keep it to preserve order. Hook for faint side-effects (trap release before soul-heart)."
 updated = "2026-06-28T20:14:44.095Z"
 
 [[record]]
 name = "trap_release_pull_identity"
-file = "src/engine/trap_release.py"
+file = "engine/src/orchestrate.cpp"
 confidence = "requirement"
 rationale = "Traps release when inflictor leaves (faint OR switch). Inflictor id=team_idx in BOUND/TRAPPED_SOURCE_ID (side derived; cross-side). Eager release in faint_active + _apply_switch_out_reset. NO_RETREAT self-trap has no source id, never releases."
 updated = "2026-06-28T20:14:55.429Z"
 
 [[record]]
 name = "switch_reset_releases_traps"
-file = "src/engine/effects.py"
+file = "engine/src/effects.cpp"
 confidence = "settled"
 rationale = "_apply_switch_out_reset(sides,side_idx,old_idx) is the shared switch-out choke-point (voluntary/forced/pivot/post-faint). After self-reset it calls release_inflicted_traps to free opponents the departed mon trapped."
 updated = "2026-06-28T20:15:00.903Z"
 
 [[record]]
 name = "bound_tick_inflictor_skip"
-file = "src/engine/residuals.py"
+file = "engine/src/residuals.cpp"
 confidence = "settled"
 rationale = "_band_late_damage skips the BOUND tick when BOUND_SOURCE_ID's inflictor is gone (inflictor_gone), covering an inflictor that faints earlier in the same residual phase before its slot reset. SOURCE_ID entries preserved in _res_tick (not decremented)."
 updated = "2026-06-28T20:15:03.333Z"
 
 [[record]]
 name = "bad_dreams_faint_logging"
-file = "src/engine/residuals.py"
+file = "engine/src/residuals.cpp"
 confidence = "settled"
 rationale = "Bad Dreams KO now logs DAMAGE+FAINT and fires Soul-Heart via faint_active (previously a silent inline HP write), making it consistent with all other residual faint paths."
 updated = "2026-06-28T20:15:08.752Z"
 
 [[record]]
 name = "bound_counter_exact_ticks"
-file = "src/engine/residuals.py"
+file = "engine/src/residuals.cpp"
 confidence = "requirement"
 rationale = "BOUND counter = EXACT ticks remaining (4/5/7). _band_late_damage ticks every turn counter>=1, incl the final counter==1 turn, so duration-N deals N ticks. On BOUND expiry, _res_tick_timed_volatiles strips its BOUND_SOURCE_SLOT/ID companions."
 updated = "2026-06-28T21:27:14.744Z"
 
 [[record]]
 name = "sweep_assume_max_trap"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_run.py"
 confidence = "requirement"
 rationale = "SWEEP_LUCK sets binding_duration_roll=rampage_duration_roll=1.0 so the sweep assumes MAX hidden duration (Bind=5, Thrash=3); Grip Claw still forces 7. Assuming shortest under-counts ticks and crashes on a real tick. Trimmed by observed end-messages."
 updated = "2026-06-28T21:27:22.647Z"
 
 [[record]]
 name = "rampage_end_observed_trim"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_reconcile.py"
 confidence = "settled"
 rationale = "_apply_observed_rampage_end (keyed on PKMNFATIGUECONFUSION, side_hint from B_ATK_NAME prefix) clears RAMPAGING+LOCKED_MOVE and sets CONFUSED on the named mon at turn start, trimming the assumed-max rampage. Mirrors _apply_observed_wrap_release."
 updated = "2026-06-28T21:27:22.693Z"
-
-[[record]]
-name = "search_no_assume_max_trap"
-file = "src/search/driver.py"
-confidence = "settled"
-rationale = "Search/stress uses random_mode live rollout + per-tier BAD/AVG/GOOD presets for forward planning, NOT observed reconciliation. So do NOT apply the sweep's assume-max trap-duration here; per-tier duration luck is correct for search."
-updated = "2026-06-28T21:27:31.112Z"
 
 [[record]]
 name = "cpp_bound_gate_parity"
@@ -1533,7 +1316,7 @@ updated = "2026-06-28T22:40:50.445Z"
 
 [[record]]
 name = "side_attribution_uses_hint"
-file = "src/simulation_runner.py"
+file = "liveplay/sweep_actions.py"
 confidence = "requirement"
 rationale = "Messages resolve side via side_hint AND name. _slot_for_name/_recipient_slot take side_constraint; flinch, Quick Claw, USINGITEM pinch-berry verifier use _fuzzy_find_side + side_of_name_slot. Unresolvable side fails loud."
 updated = "2026-06-28T22:40:56.769Z"
@@ -1575,7 +1358,7 @@ updated = "2026-06-29T17:29:45.294Z"
 
 [[record]]
 name = "bridge_seam_begin_turn"
-file = "src/cpp_bridge.py"
+file = "liveplay/cpp_driver.py"
 confidence = "settled"
 rationale = "cpp_bridge intercepts the deterministic slice at Simulator._begin_turn for clean singles turns; unported/non-interceptable fall back to Python (raise under BRIDGE_STRICT). Verify-mode (default on) reruns on a vanilla Simulator, raising on py!=cpp."
 updated = "2026-06-29T17:51:17.300Z"
@@ -1593,13 +1376,6 @@ file = "engine/src/post_hit.cpp"
 confidence = "settled"
 rationale = "Gem item-id->Type is NOT a clean item-4000 map: GRASS_GEM(4003) and ELECTRIC_GEM(4004) are transposed vs Type enum (ELECTRIC=3, GRASS=4). gem_type/gem_type_of special-case these before item-4000 fallback, else gems aren't consumed."
 updated = "2026-06-29T19:09:46.554Z"
-
-[[record]]
-name = "parity tripwire uses PINNED"
-file = "tests/test_cpp_c17g_gate.py"
-confidence = "settled"
-rationale = "Parity tripwire must use a fully-PINNED LuckProfile, not SWEEP_LUCK. SWEEP_LUCK is warn-and-sample: uninjected Category-B rolls sample independently per engine, so py/cpp comparison surfaces RNG artifacts not port gaps."
-updated = "2026-06-29T19:09:46.600Z"
 
 [[record]]
 name = "faint_via_cpp_faint_active"
@@ -1630,15 +1406,8 @@ rationale = "C1.7i: probe submodule removed; run_one_turn promoted to top-level 
 updated = "2026-06-30T06:12:05.207Z"
 
 [[record]]
-name = "keep_sweep_capture_hook"
-file = "src/engine/"
-confidence = "settled"
-rationale = "C1.7i removed the 4 sub-unit capture hooks (DAMAGE/EFFECTS/POSTHIT/RESIDUAL_CAPTURE). The NUZLOCKE_CAPTURE hook in engine_select.py is KEPT: it feeds the permanent c17g corpus. Do not delete it with the others."
-updated = "2026-06-30T06:12:09.946Z"
-
-[[record]]
 name = "sortkey_neg_slot_prio0"
-file = "src/engine/core.py"
+file = "engine/src/core_leaf.cpp"
 confidence = "settled"
 rationale = "_action_sort_key treats ANY move_slot<0 as priority 0 (recharge -1 AND Struggle -2), like _check_priority_item. Old 'slot==-1' let Struggle index move_ids[-2], inheriting that slot's priority. Caught by C1.7h parity gate; test TestStruggleSortKey."
 updated = "2026-06-30T15:26:33.539Z"
@@ -1855,7 +1624,7 @@ updated = "2026-07-03T21:18:36.228Z"
 
 [[record]]
 name = "voluntary_switch_trigger"
-file = "src/ai.py"
+file = "engine/src/ai_policy.cpp"
 confidence = "requirement"
 rationale = "Voluntary switch (user 2026-07-04): ALL move scores <= +5 (not -5), HP >= 50%, Cond2 candidate, singles; 50% gate. Priority over move scoring: SWITCH excluded from move tie-break. Target = Cond2-filtered post-KO scoring. Mirrored in cpp."
 updated = "2026-07-04T16:03:33.036Z"
@@ -1896,20 +1665,6 @@ rationale = "resolve_random_target draws (and records) only when len(foe_slots)>
 updated = "2026-07-04T23:25:49.225Z"
 
 [[record]]
-name = "trace-rollback-snapshot-pair"
-file = "src/simulator.py"
-confidence = "settled"
-rationale = "TraceRecorder mark()/rollback() is tied 1:1 to _take_snapshot/_restore_snapshot: Cat-A pauses restore a snapshot and re-execute, so Cat-B draws from the aborted run must roll back or traces get phantom records. Keep the pairing if snapshots change."
-updated = "2026-07-04T23:25:59.118Z"
-
-[[record]]
-name = "cat-a-record-at-b2-boundary"
-file = "src/simulator.py"
-confidence = "provisional"
-rationale = "Cat-A oracle fallbacks (Tri Attack, Moody, Starf, Acupressure) stay unrewired; B2 records them at the oracle-answer boundary. B2's random driver must answer EFFECT_SPORE_WHICH with weights 11/10/9 (slp/par/psn, matches Showdown), NOT uniform."
-updated = "2026-07-04T23:26:04.937Z"
-
-[[record]]
 name = "flattener-preprocessor-gated"
 file = "engine/"
 confidence = "requirement"
@@ -1925,7 +1680,7 @@ updated = "2026-07-04T23:26:20.595Z"
 
 [[record]]
 name = "crit-single-roll-override"
-file = "src/engine/damage.py"
+file = "engine/src/damage.cpp"
 confidence = "settled"
 rationale = "Hit loop resolves crit ONCE (draw -> Merciless -> Lucky Chant), passes crit_override to calculate_damage; C++ mirrors (-1/0/1). Overrides must NEVER skip the draw: trace replay depends on draw counts. Internal roll = non-loop callers only."
 updated = "2026-07-06T15:34:49.378Z"
@@ -1987,32 +1742,11 @@ rationale = "FIXED 8dc8387 (user-approved): codec.cpp encodes volatiles as plain
 updated = "2026-07-07T04:51:29.161Z"
 
 [[record]]
-name = "recorder_snapshot_random_state"
-file = "src/simulator.py"
-confidence = "settled"
-rationale = "Cat-A pause snapshots MUST capture/restore random.getstate(): random_mode draws from the GLOBAL stream, so rollback+re-execution otherwise draws a different stream and can flip an answered proc, leaving stale answer records in golden traces."
-updated = "2026-07-07T05:22:21.533Z"
-
-[[record]]
-name = "transient_oracle_injects_py"
-file = "src/simulator.py"
-confidence = "settled"
-rationale = "Resume-injected Cat-A answers (_rng_inject) are TRANSIENT: cleared at region end (_clear_transient_injects), mirroring C++ oracle.h. Else the non-popping oracle reuses old answers for later same-event procs. pre_rng_inject stays persistent."
-updated = "2026-07-07T05:22:38.546Z"
-
-[[record]]
 name = "parity_corpus_species_prune"
 file = "SCRIPTS/random_battle_fuzz.py"
 confidence = "settled"
 rationale = "Golisopod/Wimpod are pruned from all parity corpora (_parity_species_pool): their only ability is Emergency Exit/Wimp Out, whose mid-turn switch path is unported in C++ and double-residual-buggy (frozen) in Python. INTENTIONAL_DIVERGENCES #2."
 updated = "2026-07-07T05:22:44.952Z"
-
-[[record]]
-name = "sub_move_field_presence"
-file = "src/simulator.py"
-confidence = "settled"
-rationale = "Sub-move phase (Metronome/Sleep Talk) must register exp_participants field presence itself: sub-move detection exits _advance_queue BEFORE the normal update. Mirrors C++ turn.cpp; gap caused a golden-trace fingerprint mismatch (exp_participants)."
-updated = "2026-07-07T05:22:51.995Z"
 
 [[record]]
 name = "golden_corpus_freeze"
@@ -2022,15 +1756,8 @@ rationale = "User: 1000-game gate slice (seed 20260706) + 27 scenario_* rare-int
 updated = "2026-07-07T16:50:41.101Z"
 
 [[record]]
-name = "rng_inject_single_occurrence"
-file = "src/simulator.py"
-confidence = "settled"
-rationale = "FIXED: transient Cat-A events (Effect Spore/Tri Attack/Acupressure/Moody/Starf) inject as per-event QUEUES; each answer consumed once, next same-event occurrence pauses for a fresh answer. Scalar injects (sweep pre-injects, SPEED_TIE) unchanged."
-updated = "2026-07-07T17:56:31.818Z"
-
-[[record]]
 name = "forced_trace_mega_threading"
-file = "src/cpp_bridge.py"
+file = "liveplay/cpp_driver.py"
 confidence = "settled"
 rationale = "action_payload carries Action.mega; GameDriver folds per-side any(mega) into run_one_turn mega_pX scalars (fresh turn only — resume skips _begin_turn where mega applies). Without this, replayed traces never mega-evolve (1000-corpus divergence)."
 updated = "2026-07-07T06:22:08.944Z"
@@ -2044,21 +1771,21 @@ updated = "2026-07-07T06:22:15.270Z"
 
 [[record]]
 name = "no_target_move_fails"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_guards.cpp"
 confidence = "settled"
 rationale = "Moves (damaging AND status) with no live target fail (MOVE_FAIL no_target) BEFORE any rolls via draw-free _move_has_target; side/field/self targets exempt. Guard sits before the STATUS dispatch. C++ mirror: cpp_move_has_target."
 updated = "2026-07-08T05:47:40.353Z"
 
 [[record]]
 name = "doubles_faint_showdown_gen8"
-file = "src/engine/core.py"
+file = "engine/src/move_exec_guards.cpp"
 confidence = "requirement"
 rationale = "User (2026-07-07): doubles moves into a slot that fainted mid-turn follow Showdown Gen 8 — single-target retargets to survivor, spread skips corpse, fail only when no live target. Fixed-damage moves resolve targets too (were hitting slot 0 blindly)."
 updated = "2026-07-08T05:47:49.749Z"
 
 [[record]]
 name = "apply_damage_fainted_raises"
-file = "src/engine/_helpers.py"
+file = "engine/src/move_exec_damage.cpp"
 confidence = "settled"
 rationale = "_apply_damage / cpp_apply_damage raise on an already-fainted defender: no legit path damages a corpse post no-target+doubles fixes; silent corpse damage caused the Focus Band revival divergence class. Fail loudly over corrupting state."
 updated = "2026-07-08T05:47:52.413Z"
@@ -2293,3 +2020,10 @@ file = "liveplay/sweep_driver.py"
 confidence = "settled"
 rationale = "run_to_decision_boundary Step 0: fainted active + living bench = party prompt, so actions ARE replacement switches; apply via apply_switch_cpp, never run_one_turn_cpp (action1=None TypeErrors). Mirrors OLD AWAIT_POST_FAINT_SWITCH inference."
 updated = "2026-07-11T16:59:31.809Z"
+
+[[record]]
+name = "uninjected_rng_filters_cand"
+file = "liveplay/sweep_driver.py"
+confidence = "requirement"
+rationale = "UninjectedRNGError in run_to_decision_boundary filters the candidate (return None + log once) instead of aborting the sweep: it means the branch diverged from observed reality. All-filtered still raises the no-candidate SimulationError."
+updated = "2026-07-11T17:34:34.784Z"
