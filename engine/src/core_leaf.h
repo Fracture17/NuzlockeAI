@@ -107,9 +107,13 @@ std::vector<Entry> cpp_build_pending_entries(
 // Speed-tie handling (SPEED_TIE oracle):
 //   - overrides->speed_tie set: resolve ALL ties by the ordering's rank (both modes).
 //   - else random_mode: native tiebreaker (the per-entry tie field) resolves it.
+//   - else forced_tie set (plain-mode sweep hook): resolve a controlled cross-side MOVE tie by
+//     the ordering's rank instead of throwing. Sticky/re-fired for every tie in the turn (mirrors
+//     OLD sweep pre_rng_inject[SPEED_TIE] re-fire semantics); no consume cursor.
 //   - else controlled cross-side MOVE tie: throw NeedsRNG{SPEED_TIE} so the driver pauses.
 // On equal sort keys, returns the FIRST element achieving the max (matches Python max + stable_sort).
 Entry cpp_select_next_action(const BattleState& state, std::vector<Entry>& pending,
-                             const OracleOverrides* overrides = nullptr);
+                             const OracleOverrides* overrides = nullptr,
+                             const SpeedTieOrder* forced_tie = nullptr);
 
 #endif // NUZLOCKE_CORE_LEAF_H

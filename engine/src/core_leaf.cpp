@@ -890,7 +890,8 @@ std::vector<Entry> cpp_build_pending_entries(
 // Mirrors Python _select_next_action: detects speed ties (controlled → throw; random_mode → native),
 // then picks the FIRST entry achieving the max sort key (matches Python max + stable_sort first-wins).
 Entry cpp_select_next_action(const BattleState& state, std::vector<Entry>& pending,
-                             const OracleOverrides* overrides) {
+                             const OracleOverrides* overrides,
+                             const SpeedTieOrder* forced_tie) {
     if (pending.empty())
         throw std::runtime_error("cpp_select_next_action called with empty pending");
 
@@ -908,7 +909,8 @@ Entry cpp_select_next_action(const BattleState& state, std::vector<Entry>& pendi
         for (Entry& e : pending)
             e.tie = speed_tie_value_from_order(sto, e.side_idx, e.source_slot);
     } else if (pending.size() > 1) {
-        for (size_t i = 0; i < pending.size(); ++i)
+        bool forced_applied = false;
+        for (size_t i = 0; i < pending.size() && !forced_applied; ++i)
             for (size_t j = i + 1; j < pending.size(); ++j)
                 if (action_sort_key(state, pending[i]).top_two_equal(
                         action_sort_key(state, pending[j]))) {
@@ -917,8 +919,19 @@ Entry cpp_select_next_action(const BattleState& state, std::vector<Entry>& pendi
                     bool cross_side = pending[i].side_idx != pending[j].side_idx;
                     bool both_moves = pending[i].action.kind == ACTION_MOVE
                                    && pending[j].action.kind == ACTION_MOVE;
-                    if (cross_side && both_moves)
+                    if (cross_side && both_moves) {
+                        // Plain-mode sweep hook: resolve the controlled tie by the forced ordering
+                        // instead of pausing. Sticky (re-fired for every tie this turn), applied to
+                        // ALL entries so multi-entry ties resolve consistently. Fail-loud if the
+                        // ordering omits any tied slot (speed_tie_value_from_order throws).
+                        if (forced_tie) {
+                            for (Entry& e : pending)
+                                e.tie = speed_tie_value_from_order(*forced_tie, e.side_idx, e.source_slot);
+                            forced_applied = true;
+                            break;
+                        }
                         throw NeedsRNG{RngEventC::SPEED_TIE, encode_speed_tie_options(pending)};
+                    }
                     // Same-side or switch ties: stable sort / first-max pick handles them.
                 }
     }

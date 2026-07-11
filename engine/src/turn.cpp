@@ -293,7 +293,8 @@ void cpp_run_one_turn(BattleState& state,
                       Policy* policies[2],
                       nlohmann::json* action_log,
                       const OracleOverrides* overrides,
-                      const ActionSnapshot* resume_snap) {
+                      const ActionSnapshot* resume_snap,
+                      const SpeedTieOrder* forced_tie) {
     // Plain mode: no snapshots, NeedsRNG propagates unchanged.
     // Oracle mode: per-action snapshot + NeedsRNG→TurnPause catch/restore.
     const bool oracle = (overrides != nullptr);
@@ -461,7 +462,7 @@ void cpp_run_one_turn(BattleState& state,
 
         Entry best;
         try {
-            best = cpp_select_next_action(state, pending, overrides);
+            best = cpp_select_next_action(state, pending, overrides, forced_tie);
         } catch (NeedsRNG& nr) {
             // SPEED_TIE with no ordering override: restore snapshot and surface pause.
             if (!oracle) throw;

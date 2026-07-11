@@ -103,8 +103,21 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
               // via apply_switch between turns (sweep replay layer, E2 Task 4 decision).
               bool finalize_on_post_faint = j.value("finalize_on_post_faint", false);
 
+              // speed_tie_order (optional, sweep replay hook): a JSON array of [side, slot]
+              // pairs giving the forced act-order for a controlled cross-side speed tie. When
+              // present, resolves the tie by this ordering's rank instead of throwing NeedsRNG
+              // (sticky/re-fired for the whole turn). Absent → today's throwing behavior.
+              SpeedTieOrder forced_tie;
+              const SpeedTieOrder* forced_tie_ptr = nullptr;
+              if (j.contains("speed_tie_order") && j["speed_tie_order"].is_array()) {
+                  for (const auto& pair : j["speed_tie_order"])
+                      forced_tie.order.emplace_back(pair.at(0).get<int>(), pair.at(1).get<int>());
+                  forced_tie_ptr = &forced_tie;
+              }
+
               cpp_run_one_turn(s, a0, a1, luck_p0, luck_p1, tl0, tl1, mega_p0, mega_p1,
-                               finalize_on_post_faint);
+                               finalize_on_post_faint, nullptr, nullptr, nullptr, nullptr,
+                               forced_tie_ptr);
 
               nlohmann::json out;
               out["state"] = nlohmann::json::parse(battle_state_to_json(s));
@@ -114,6 +127,8 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
           "action_p0/action_p1 may be a single dict (singles) or a list of dicts (doubles). "
           "Optional finalize_on_post_faint (default false): finalize with fainted actives in "
           "place instead of throwing, for the sweep replay layer. "
+          "Optional speed_tie_order ([[side,slot],...]): force a controlled cross-side speed tie "
+          "by this ordering instead of throwing NeedsRNG (sweep replay layer). "
           "Pause boundaries raise RuntimeError(unported:).");
 
     // C1.7h Stage 1+4: post-faint switch primitive. JSON-in/JSON-out.

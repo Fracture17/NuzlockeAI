@@ -83,8 +83,14 @@ class UnportedTurn(RuntimeError):
 def run_one_turn_cpp(state: BattleState,
                      action_p0: Action, action_p1: Action,
                      luck_p0: LuckProfile, luck_p1: LuckProfile,
-                     *, mega_p0: bool = False, mega_p1: bool = False) -> BattleState:
+                     *, mega_p0: bool = False, mega_p1: bool = False,
+                     speed_tie_order: list[tuple[int, int]] | None = None) -> BattleState:
     """Run one deterministic single turn through the C++ run_one_turn binding.
+
+    speed_tie_order: optional forced act-order for a controlled cross-side speed tie, as a list
+    of (side, slot) pairs (earlier = acts first). When given, the tie is resolved by this ordering
+    instead of the binding throwing NeedsRNG — the sweep replay layer's SPEED_TIE force-injection
+    (mirrors OLD pre_rng_inject[SPEED_TIE]). None → the binding throws on an unresolved tie.
 
     Raises UnportedTurn for an `unported:` boundary; re-raises anything else.
     """
@@ -101,6 +107,8 @@ def run_one_turn_cpp(state: BattleState,
         "mega_p0": mega_p0,
         "mega_p1": mega_p1,
     }
+    if speed_tie_order is not None:
+        payload["speed_tie_order"] = [[int(side), int(slot)] for side, slot in speed_tie_order]
     try:
         out_json = cpp.run_one_turn(json.dumps(payload))
     except Exception as exc:  # noqa: BLE001 — classify by message, re-raise non-unported.

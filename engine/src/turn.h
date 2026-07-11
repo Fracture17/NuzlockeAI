@@ -65,6 +65,10 @@ struct TurnPause {
 //   and phaze oracle draws. When null, any pending switch throws "unported: pending_switch".
 // action_log: nullable JSON array; when non-null, forced_switch entries are appended here.
 // mega_p0/mega_p1: scalar bools — doubles mega is slot-0 only (mirrors Python simulator.py).
+// forced_tie: nullable plain-mode SPEED_TIE ordering (sweep replay hook). When non-null, a
+//   controlled cross-side MOVE speed tie is resolved by this ordering's rank instead of throwing
+//   NeedsRNG — sticky/re-fired for the whole turn (mirrors OLD sweep pre_rng_inject re-fire). No
+//   effect in oracle mode (overrides takes precedence) or when no tie occurs. nullptr = today.
 void cpp_run_one_turn(BattleState& state,
                       const std::vector<ExecAction>& actions_p0,
                       const std::vector<ExecAction>& actions_p1,
@@ -75,6 +79,7 @@ void cpp_run_one_turn(BattleState& state,
                       Policy* policies[2] = nullptr,
                       nlohmann::json* action_log = nullptr,
                       const OracleOverrides* overrides = nullptr,
-                      const ActionSnapshot* resume_snap = nullptr);
+                      const ActionSnapshot* resume_snap = nullptr,
+                      const SpeedTieOrder* forced_tie = nullptr);
 
 #endif // NUZLOCKE_TURN_H
