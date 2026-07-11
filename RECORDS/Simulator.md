@@ -2,7 +2,7 @@
 
 Reference for RNG control and state inspection when writing tests with the battle harness. For how to run turns and assert on events, see LOGGER_GUIDE.md.
 
-*Note: The Simulator itself (`Simulator.step`, `make_sim`, `run_turn`, `capture_turn`) lives in the old repo (PycharmProjects/NuzlockeAI) until Stage E. This document is carried as the semantic reference — the State Structure and Luck Control sections apply directly to the new repo: `liveplay/rng.py` (`LuckProfile`, `GOOD_LUCK`, `BAD_LUCK`, `AVERAGE_LUCK`), `liveplay/state/battle.py`, `liveplay/state/side.py`, `liveplay/state/pokemon.py`. References to `src/simulator.py` below describe old-repo code.*
+*Note (Stage E, 2026-07-11): the Python `Simulator` class (`Simulator.step`, `make_sim`, `run_turn`, `capture_turn`) was NOT carried — the C++ turn driver replaced it. New-repo equivalents: `liveplay/sweep_driver.py` (`run_one_turn_cpp` via `run_to_decision_boundary`, `run_with_capture` for state+event capture, `apply_switch_cpp` for replacements) and `liveplay/engine_select.py` (`enumerate_legal_actions`, `compute_action_probabilities` = the C++ opponent AI). The State Structure and Luck Control sections apply directly: `liveplay/rng.py` (`LuckProfile`, `GOOD_LUCK`, `BAD_LUCK`, `AVERAGE_LUCK`), `liveplay/state/*.py`. Code snippets referencing `src/simulator.py`/`src/ai.py` below are historical (retired old-repo API) kept as the semantic reference.*
 
 ---
 
@@ -61,7 +61,7 @@ sim.luck_profile_0 = dataclasses.replace(GOOD_LUCK, damage_roll=0.75, crit_thres
 
 ### Default game AI
 
-`select_ai_action(state, ai_idx)` (`src/ai.py`, old-repo resident until Stage E) implements the game's NPC AI. Assign it to `decision_logic_0/1` on the simulator to automate a side's main action selection each turn. Both sides can be independently automated or left as manual.
+`select_ai_action(state, ai_idx)` (`src/ai.py`, historical — in this repo the NPC AI is C++-side: `liveplay/engine_select.compute_action_probabilities(state, ai_idx)` returns the full action distribution) implements the game's NPC AI. Assign it to `decision_logic_0/1` on the simulator to automate a side's main action selection each turn. Both sides can be independently automated or left as manual.
 
 ```python
 from src.ai import select_ai_action  # old repo

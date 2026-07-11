@@ -140,6 +140,6 @@ survivors = sr.run_candidate_sweep(
 )
 ```
 
-**Stage E note:** in this repo `run_candidate_sweep` is a seam stub that raises `NotImplementedError` until the C++ sweep is wired; until then, run the probe in the old repo (`PycharmProjects/NuzlockeAI`, `import src.simulation_runner as sr`) where the Python sweep still lives.
+**Stage E note (resolved 2026-07-11):** `run_candidate_sweep` is live and C++-backed (`liveplay/engine_select.py` → `liveplay/sweep_run.py` orchestration over the C++ turn driver); the probe above runs directly in this repo. The sweep's log-event filter lives in `liveplay/sweep_reconcile.py` (`check_log_events`).
 
 To find *why* candidates are rejected, monkeypatch the relevant filter (e.g. wrap the sweep's `_check_log_events` to dump `capturing.events` and its return value) and re-run the boundary — fully deterministic, no emulator needed. `replay_boundary(record)` and `diff_battle_states(a, b)` are also importable for custom comparisons.

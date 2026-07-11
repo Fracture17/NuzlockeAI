@@ -6,7 +6,7 @@ The logger captures structured events emitted by the engine during a turn. Tests
 
 The global logger is `None` by default (zero-cost no-op). `capture_turn` installs a `CapturingLogger`, drives the simulator until the next turn boundary, then restores the previous logger. `capture_battle` does the same across an arbitrary sequence of turns.
 
-The logger lives at `liveplay/logger.py` (`LogEvent`, `CapturingLogger`). The harness functions `capture_turn`, `run_turn`, and `make_sim` *(_italicized note below_)* live in the old repo until Stage E; new-repo tests import assertion helpers from `tests/state_builders.py`.
+The logger lives at `liveplay/logger.py` (`LogEvent`, `CapturingLogger`). Since Stage E the harness is C++-backed: `liveplay/sweep_driver.run_with_capture(state, action0, action1, config)` returns `(final_state, CapturingLogger)` for one turn — the `capture_turn` equivalent; the C++ rich event log is expanded via `CapturingLogger.from_cpp`. Assertion helpers come from `tests/state_builders.py`. Old-repo `capture_turn`/`run_turn`/`make_sim` snippets below are historical semantic reference.
 
 ---
 
@@ -34,7 +34,7 @@ assert_event(log, LogEvent.DAMAGE, target=Species.CORSOLA, source="move")
 assert_event(log, LogEvent.STATUS_APPLY, target=Species.CORSOLA, status=Status.POISON)
 ```
 
-*Note: `capture_turn`, `run_turn`, and `make_sim` are harness functions that live in the old repo (PycharmProjects/NuzlockeAI) until Stage E. New-repo tests import assertion helpers from `tests/state_builders.py` instead.*
+*Note: `capture_turn`, `run_turn`, and `make_sim` were old-repo harness functions (retired at Stage E). In this repo use `run_with_capture` from `liveplay/sweep_driver.py` with a `SweepConfig` of per-side `SideOverrides` for luck control (see `tests/test_rich_log_hp_events.py` for the working pattern).*
 
 ## Multi-Turn Pattern
 
