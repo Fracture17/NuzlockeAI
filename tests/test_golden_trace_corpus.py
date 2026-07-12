@@ -1,17 +1,18 @@
-# Frozen golden-trace corpus gate (Stage B freeze): every committed trace in
+# Hand-authored scenario-trace gate: every committed scenario_* trace in
 # tests/fixtures/golden_traces/ must replay clean through the C++ GameDriver
-# (no forced_trace mismatch; winner/turn-count/fingerprint match the Python recording).
+# forced replay (no forced_trace mismatch; winner/turn-count/fingerprint match).
 #
-# Slow (opt-in with -m slow): replays the frozen in-repo slice (1000 games + scenario
-# traces, ~7s). A larger 100k corpus lives gitignored in golden_traces_100k/ (same
-# recorder, seed 20260707); verify it before milestones with:
-#   .venv/bin/python SCRIPTS/replay_golden_traces.py --dir golden_traces_100k --jobs 0
-# Re-record after INTENTIONAL C++ behavior changes with:
-#   .venv/bin/python SCRIPTS/record_golden_traces.py --count 1000 --seed 20260706 \
-#       --out-dir tests/fixtures/golden_traces --gzip
-#   .venv/bin/python SCRIPTS/record_scenario_traces.py \
-#       --out-dir tests/fixtures/golden_traces
-# then verify with SCRIPTS/replay_golden_traces.py before committing.
+# History (2026-07-12 rebase): the 1000 random Python-parity trace_* files and the
+# git-ignored 100k extended corpus were RETIRED — the C++ engine is the sole
+# authority, so parity-to-Python fought correctness on every intentional fix.
+# Their replacement is the C++ self-regression manifest gate:
+#   committed 2k subset  tests/fixtures/cpp_manifest/  (tests/test_cpp_manifest_gate.py)
+#   full 1M corpus       cpp_manifest_1m/ (git-ignored), regenerate/verify with
+#   SCRIPTS/record_cpp_manifest.py.
+# The 28 scenario_* traces remain: they pin specific mechanics turn-by-turn and were
+# recorded by the old repo's SCRIPTS/record_scenario_traces.py (frozen archive).
+#
+# Slow (opt-in with -m slow): replays the 28 scenario traces (<1s).
 from __future__ import annotations
 
 import importlib.util

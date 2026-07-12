@@ -5,9 +5,10 @@ now rebuilds the queue after each drain pass and keeps draining until no fainted
 with a live bench remains — hazard-killed replacements are re-prompted immediately,
 matching the real game. Tests: `tests/test_faint_queue_rebuild.py` (red pre-fix, green
 post-fix). Gates: frozen 1028 + fast suite + native ctest clean; the 100k extended corpus
-lost exactly 2 stale Python-parity traces that encoded this bug — quarantined to
-`golden_traces_100k_quarantine/` (user decision: quarantine now, re-base corpus later; see
-TODO.md "Re-base the golden-trace corpus"). See record `faint_queue_no_rebuild_bug`.
+lost exactly 2 stale Python-parity traces that encoded this bug — quarantined, then
+retired along with the whole random Python-parity corpus in the 2026-07-12 rebase to the
+C++ self-regression manifest gate (see TODO.md "Re-base" entry, record
+`cpp_manifest_gate`). See record `faint_queue_no_rebuild_bug`.
 
 Original deferral: user decision 2026-07-04 (Stage A exit gate review) — fix in the new
 repo under golden-trace verification.
@@ -51,4 +52,4 @@ remains, matching the real game. This supersedes the retired "no queue rebuild" 
 decision and changes trajectories only for the rare hazard-death battles. The old Python
 engine is retired and shares the bug, so no lockstep change was needed there — the C++
 engine is now the sole authority. Trajectory changes surfaced as 2 invalidated 100k traces
-(quarantined; corpus re-base deferred per user).
+(quarantined; the whole random corpus was later retired by the 2026-07-12 manifest rebase).

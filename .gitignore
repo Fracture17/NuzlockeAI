@@ -1,7 +1,6 @@
-# Large replay corpus (862MB) — kept locally, never committed
-golden_traces_100k/
-# Traces quarantined out of the corpus (stale Python-parity references); see the dir's README
-golden_traces_100k_quarantine/
+# Large C++ self-regression manifest corpus (~1GB, 1M games) — kept locally, never committed.
+# Committed gate subset: tests/fixtures/cpp_manifest/ (first 2k of the same seed sequence).
+cpp_manifest_1m/
 
 # Build outputs
 cmake-build-*/

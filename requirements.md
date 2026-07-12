@@ -2048,3 +2048,10 @@ file = "engine/src/ai_scorer_dist.cpp"
 confidence = "requirement"
 rationale = "Exception moves (Relic Song/Meteor Beam/Future Sight/trapping) excluded from HD: a KO scores kill bonus ONLY (fixed kb 6/3, +1 Moxie), no +6/+8 base, no variance; additive stacks. Matches ai.ts, AI.md [3,6]. Fixed 2026-07-11 (was flat / 6+kb var)."
 updated = "2026-07-12T07:44:22.031Z"
+
+[[record]]
+name = "cpp_manifest_gate"
+file = "SCRIPTS/record_cpp_manifest.py"
+confidence = "requirement"
+rationale = "User 2026-07-12: gate = C++ self-regression manifest (full final state + fingerprint); 1M games mixed even=ai/ai odd=random/random, seed 20260712; commit only first 2k (tests/fixtures/cpp_manifest). Random parity traces retired; 28 scenario kept."
+updated = "2026-07-12T15:41:49.495Z"

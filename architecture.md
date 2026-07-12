@@ -18,7 +18,7 @@
 
 **C++ engine (`engine/`):** pure-C++ port of the battle engine + Run & Bun opponent AI; `nuzlocke_core` static library + thin pybind11 module. `cpp_run_game` runs full singles games with per-side policies ("random"/"ai"); `GameDriver` (`game_driver.cpp`) is a resumable turn loop that pauses on Category-A oracle events (`oracle.h`) for search and forced trace replay.
 
-**Golden-trace parity:** frozen corpus `tests/fixtures/golden_traces/` (1028 traces) replays through `GameDriver` forced replay (`forced_trace.h`) via `SCRIPTS/replay_golden_traces.py`, asserting winner/turn/fingerprint identity. The 100k corpus (`golden_traces_100k/`, git-ignored) is the extended gate.
+**Regression gates:** C++ self-regression manifest — committed 2k subset `tests/fixtures/cpp_manifest/` + git-ignored 1M corpus `cpp_manifest_1m/` (mixed ai/random self-play; `SCRIPTS/record_cpp_manifest.py` records and verifies seed→final-state/fingerprint). 28 hand-authored `scenario_*` traces in `tests/fixtures/golden_traces/` still replay via `GameDriver` forced replay (`SCRIPTS/replay_golden_traces.py`).
 
 **Stage E seam:** `liveplay/engine_select.py` — `enumerate_legal_actions`, `compute_action_probabilities`, and `run_candidate_sweep` are all live (C++-backed); sweep orchestration lives in `liveplay/sweep_*.py` over `liveplay/sweep_driver.py` (per-trial C++ turn driver via `cpp_driver.run_one_turn_cpp`/`apply_switch_cpp`). The old repo (`PycharmProjects/NuzlockeAI`) is retired (2026-07-11) — frozen in place as a read-only archive; see `RECORDS/C++Transition.md`.
 
