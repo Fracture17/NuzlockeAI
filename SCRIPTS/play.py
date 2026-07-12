@@ -197,6 +197,22 @@ def _resolve_team_mon(name: str, team: list) -> tuple:
     )
 
 
+def _canonical_team_key(name: str, team: list) -> str:
+    """Canonicalize a raw OCR name to a stable per-species key for HP-log/buffer dicts.
+
+    When the team roster is known, resolve ``name`` to a team mon (exact species-display
+    match, then fuzzy) and return that mon's canonical display name — so OCR jitter across
+    frames collapses to ONE key and an unresolvable name fails loud (per _resolve_team_mon)
+    instead of silently creating a phantom log. Before the battle state is populated the
+    team is empty (pre-battle stub); there is nothing to resolve, so fall back to the raw
+    lowercased name and do NOT raise.
+    """
+    if not team:
+        return name.lower()
+    mon, _ = _resolve_team_mon(name, team)
+    return emulator_species_name(mon.species).lower()
+
+
 _TEXT_COLORS = {(255, 255, 255), (74, 74, 74), (66, 66, 66)}
 _OUT = _CAPTURE_DIR.parent
 
@@ -678,6 +694,13 @@ def _run_turn_sweep(
     opp_side = state.sides[1]
     active_opp_name = _active_opp_name(opp_side)
     opp_active = opp_side.active_indices[0] if opp_side.active_indices else 0
+    # Use the canonical display name as the lookup key — matches the write side's canonical key.
+    # _active_opp_name returns the raw enum name (e.g. "ZIGZAGOON_GALAR") which won't match.
+    active_opp_display = (
+        emulator_species_name(opp_side.team[opp_active].species).lower()
+        if opp_active < len(opp_side.team)
+        else active_opp_name
+    )
 
     # Build identity-bound HP delta records (HpDeltaSeq) for the sweep. Each record
     # binds a mon's observed (before, after) sequence to its (side, species) so the
@@ -690,10 +713,10 @@ def _run_turn_sweep(
     hp_deltas.extend(foe_faint_deltas_ref[0])
     foe_faint_deltas_ref[0] = []
 
-    # Opponent: the active mon's k-pixel log, keyed by the active mon's name. (Mid-turn
-    # opponent faint/switch attribution is a separate concern; preserved as active-only.)
+    # Opponent: the active mon's k-pixel log, keyed by the active mon's canonical display name.
+    # (Mid-turn opponent faint/switch attribution is a separate concern; preserved as active-only.)
     # TODO: doubles will need separate per-slot records.
-    k_log = _select_active_opp_klog(opp_k_logs, active_opp_name)
+    k_log = _select_active_opp_klog(opp_k_logs, active_opp_display)
     if len(k_log) >= 2 and active_opp_name:
         opp_mon = opp_side.team[opp_active]
         hp_deltas.append(HpDeltaSeq(
@@ -818,18 +841,20 @@ def _do_capture(
     reading = read_opponent_hp_bar(opponent_image)
     opp_name = (opp.name or "").lower()
     if opp_name:
-        opp_buf = opponent_hp_bufs.setdefault(opp_name, OpponentHpBuffer())
+        opp_key = _canonical_team_key(opp_name, battle_state_ref[0].sides[1].team)
+        opp_buf = opponent_hp_bufs.setdefault(opp_key, OpponentHpBuffer())
         if opp_buf.update(reading.k):
             k = opp_buf.confirmed
-            name_log = opp_k_log_ref[0].setdefault(opp_name, [])
+            name_log = opp_k_log_ref[0].setdefault(opp_key, [])
             if not name_log or name_log[-1] != k:
                 name_log.append(k)
     player_name = (player.name or "").lower()
     if player_name:
-        pl_buf = player_hp_bufs.setdefault(player_name, PlayerHpBuffer())
+        player_key = _canonical_team_key(player_name, battle_state_ref[0].sides[0].team)
+        pl_buf = player_hp_bufs.setdefault(player_key, PlayerHpBuffer())
         if pl_buf.update(player.hp_current):
             hp = pl_buf.confirmed
-            name_log = player_hp_log_ref[0].setdefault(player_name, [])
+            name_log = player_hp_log_ref[0].setdefault(player_key, [])
             if not name_log or name_log[-1] != hp:
                 name_log.append(hp)
 
@@ -863,8 +888,9 @@ def _do_capture(
         # mons' logs (so the outgoing mon's pre-switch deltas survive this turn).
         if finalized_result.string_id in _PLAYER_SWITCH_IN_IDS:
             for name in _extract_player_names(finalized_result):
-                player_hp_log_ref[0][name] = []
-                buf = player_hp_bufs.get(name)
+                key = _canonical_team_key(name, battle_state_ref[0].sides[0].team)
+                player_hp_log_ref[0][key] = []
+                buf = player_hp_bufs.get(key)
                 if buf is not None:
                     buf.reset()
 
@@ -878,15 +904,16 @@ def _do_capture(
                 # now, so the killing move keeps its HP constraint (Issue 29).
                 bs = battle_state_ref[0]
                 foe_side = bs.sides[1] if bs and len(bs.sides) > 1 else None
+                key = _canonical_team_key(name, foe_side.team if foe_side is not None else [])
                 if foe_side is not None and foe_side.active_indices:
                     outgoing = foe_side.team[foe_side.active_indices[0]]
                     rec = build_faint_record_from_klog(
-                        opp_k_log_ref[0].get(name, []), outgoing.species, outgoing.max_hp,
+                        opp_k_log_ref[0].get(key, []), outgoing.species, outgoing.max_hp,
                     )
                     if rec is not None:
                         foe_faint_deltas_ref[0].append(rec)
-                opp_k_log_ref[0][name] = []
-                buf = opponent_hp_bufs.get(name)
+                opp_k_log_ref[0][key] = []
+                buf = opponent_hp_bufs.get(key)
                 if buf is not None:
                     buf.reset()
 

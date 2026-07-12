@@ -2034,3 +2034,10 @@ file = "liveplay/vision/ocr.py"
 confidence = "settled"
 rationale = "HP-box name pass must include the 'Lv' token and truncate the name at the first 'Lv': FONT_SMALL digit 0 == letter O pixel-exactly, so an alpha-only pass reads Lv10's 0 as a trailing O, splitting name-keyed HP logs (Allen1 sweep crash 2026-07-11)."
 updated = "2026-07-11T21:38:02.943Z"
+
+[[record]]
+name = "hp_log_key_canonicalization"
+file = "SCRIPTS/play.py"
+confidence = "requirement"
+rationale = "Both sides' HP-log/buffer keys are canonicalized to the resolved species display name (_canonical_team_key) so OCR jitter collapses to one key and unresolvable names fail loud. Empty team (pre-battle stub) falls back to raw lowercased name, no raise."
+updated = "2026-07-12T05:47:36.783Z"

@@ -516,6 +516,7 @@ class TestSaveTrainingSnapshot:
 
 
 _active_opp_name = play_module._active_opp_name
+_canonical_team_key = play_module._canonical_team_key
 
 
 def _make_opp_side(active_indices, team_names):
@@ -556,3 +557,42 @@ class TestActiveOppName:
         # No active slot and no team: legitimate "not yet in battle" state.
         opp_side = _make_opp_side([], [])
         assert _active_opp_name(opp_side) == ""
+
+
+class TestCanonicalTeamKey:
+    """_canonical_team_key collapses OCR-jittered names to a stable species display key.
+
+    When the team is non-empty, any name resolving to the same mon produces the same
+    canonical key — preventing phantom log entries from OCR glyph errors.
+    When the team is empty (pre-battle stub), falls back to raw lowercased name without
+    raising so the pre-battle state does not blow up on missing roster data."""
+
+    @staticmethod
+    def _team(*species):
+        return [SimpleNamespace(species=s) for s in species]
+
+    def test_empty_team_falls_back_to_raw_lowercased(self):
+        # Pre-battle: team is empty — no roster to resolve against, so return raw lowercase.
+        assert _canonical_team_key("LILLIPUP", []) == "lillipup"
+
+    def test_exact_match_returns_display_name(self):
+        team = self._team(Species.LILLIPUP)
+        assert _canonical_team_key("lillipup", team) == "lillipup"
+
+    def test_ocr_jitter_collapses_to_one_key(self):
+        # A one-glyph OCR error ("lilipup") and the clean spelling both resolve to "lillipup".
+        team = self._team(Species.LILLIPUP)
+        key_clean = _canonical_team_key("lillipup", team)
+        key_jitter = _canonical_team_key("lilipup", team)
+        assert key_clean == key_jitter == "lillipup"
+
+    def test_regional_form_uses_display_name(self):
+        # ZIGZAGOON_GALAR's display name is "zigzagoon", not "zigzagoon_galar".
+        team = self._team(Species.ZIGZAGOON_GALAR)
+        assert _canonical_team_key("zigzagoon", team) == "zigzagoon"
+
+    def test_unresolvable_name_raises(self):
+        # Non-empty team but name matches nothing — must fail loud, not silently phantom.
+        team = self._team(Species.LILLIPUP)
+        with pytest.raises(RuntimeError):
+            _canonical_team_key("charizard", team)
