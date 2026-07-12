@@ -51,8 +51,9 @@ static constexpr int N_PARALYSIS_MOVES = 5;
 static constexpr int32_t POISON_INFLICT_MOVES[] = {
     77,  // POISON_POWDER
     92,  // TOXIC
+    139,  // POISON_GAS
 };
-static constexpr int N_POISON_INFLICT_MOVES = 2;
+static constexpr int N_POISON_INFLICT_MOVES = 3;
 
 static constexpr int32_t SPEED_SETUP_MOVES[] = {
     97,  // AGILITY

@@ -5,6 +5,7 @@
 // AIPolicy::select_phaze: uniform-random game-mechanic draw over bench candidates.
 #include "ai_policy.h"
 #include "ai_scorer.h"
+#include "ai_scorer_internal.h"  // exception_move_sees_kill, namespace ai_scorer
 #include "ai_damage.h"
 #include "ai_shared.h"
 #include "orchestrate.h"  // cpp_enumerate_legal_actions
@@ -61,13 +62,13 @@ static void sample_highest_slots(
 // ---------------------------------------------------------------------------
 static int sample_score(
     const BattleState& state, int ai_idx, const ExecAction& action,
-    bool is_highest, bool kills, bool ai_fst,
+    bool is_highest, bool kills, bool ai_fst, bool sees_kill,
     std::mt19937_64& rng)
 {
     if (action.kind == AK_SWITCH) return 0;
 
     ScoreDistC dist = cpp_dist_action(state, ai_idx, action,
-                                      is_highest ? 1.0 : 0.0, kills, ai_fst);
+                                      is_highest ? 1.0 : 0.0, kills, ai_fst, sees_kill);
     if (dist.empty()) return 0;
 
     std::uniform_real_distribution<double> real_dist(0.0, 1.0);
@@ -102,6 +103,9 @@ AIScoreResult cpp_score_ai_actions(const BattleState& state, int ai_idx, std::mt
     std::set<int32_t> highest_slots, kill_slots;
     sample_highest_slots(ctx.slots, ctx.roll_arrays, pl_hp, rng, highest_slots, kill_slots);
 
+    // Compute once per turn: does any exception move (trapping/Future Sight) see a kill?
+    bool exc = ai_scorer::exception_move_sees_kill(state, ai_idx);
+
     // Doubles expansion: append target_slot=1 copies of damaging MOVE actions.
     if (state.format == FMT_DOUBLES && pl_side_ref.active_indices.size() >= 2) {
         std::vector<ExecAction> extra;
@@ -132,7 +136,8 @@ AIScoreResult cpp_score_ai_actions(const BattleState& state, int ai_idx, std::mt
         bool is_highest = (action.kind == AK_MOVE && highest_slots.count(action.move_slot) > 0);
         bool roll_kills = (action.kind == AK_MOVE && kill_slots.count(action.move_slot) > 0);
         bool kills      = is_highest && roll_kills;
-        scores.push_back(sample_score(state, ai_idx, action, is_highest, kills, ai_fst, rng));
+        bool sees_kill  = exc || !kill_slots.empty();
+        scores.push_back(sample_score(state, ai_idx, action, is_highest, kills, ai_fst, sees_kill, rng));
     }
 
     result.actions = std::move(actions);

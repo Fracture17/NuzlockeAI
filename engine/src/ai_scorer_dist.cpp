@@ -215,11 +215,12 @@ ScoreDistC dist_terrain(const BattleState& state, int ai_idx) {
 // ---------------------------------------------------------------------------
 // _dist_poison_move
 // ---------------------------------------------------------------------------
-ScoreDistC dist_poison_move(const BattleState& state, int ai_idx, int32_t move_id) {
+ScoreDistC dist_poison_move(const BattleState& state, int ai_idx, int32_t move_id, bool sees_kill) {
     const PokemonState& ai_mon = active_mon(state, ai_idx);
     const PokemonState& pl_mon = active_mon(state, 1 - ai_idx);
+    (void)sees_kill;  // accepted but unused in this stage; consumers added in stage 2
     // Toxic blocked on Poison/Steel unless Corrosion
-    if (move_id == 92 /*TOXIC*/) {  // Move.TOXIC = 92
+    if (move_id == MV_TOXIC) {
         bool blocked = false;
         for (int32_t t : pl_mon.types)
             if (t == TYPE_POISON || t == TYPE_STEEL) { blocked = true; break; }
@@ -245,7 +246,8 @@ ScoreDistC dist_will_o_wisp(const BattleState& state, int ai_idx) {
 // ---------------------------------------------------------------------------
 ScoreDistC dist_status_special(const BattleState& state, int ai_idx, int32_t move_id,
                                const PokemonState& ai_mon, const PokemonState& pl_mon,
-                               bool ai_fst) {
+                               bool ai_fst, bool sees_kill) {
+    (void)sees_kill;  // accepted but unused in this stage; consumers added in stage 2
     // Role Play: -20 in singles
     if (move_id == MV_ROLE_PLAY) {
         if (state.format != FMT_DOUBLES) return {{-20, 1.0}};
@@ -680,6 +682,27 @@ ScoreDistC dist_damage(const BattleState& state, int ai_idx, int32_t move_id,
     }
 
     return base_dist;
+}
+
+// ---------------------------------------------------------------------------
+// exception_move_sees_kill
+// True if any legal MOVE action is a trapping move or MV_FUTURE_SIGHT whose
+// cpp_expected_damage (MAX_LUCK_C) >= opponent HP. Mirrors the deterministic
+// kill checks at dist_damage lines ~579-601 exactly, reusing the same
+// is_trapping predicate and MV_FUTURE_SIGHT constant from ai_shared.h.
+// ---------------------------------------------------------------------------
+bool exception_move_sees_kill(const BattleState& state, int ai_idx) {
+    const PokemonState& ai_mon = active_mon(state, ai_idx);
+    const PokemonState& pl_mon = active_mon(state, 1 - ai_idx);
+    for (int slot = 0; slot < 4; ++slot) {
+        int32_t mid = move_id_at(ai_mon, slot);
+        if (mid == MV_NONE) continue;
+        if (move_pp_at(ai_mon, slot) == 0) continue;
+        if (!is_trapping(mid) && mid != MV_FUTURE_SIGHT) continue;
+        int32_t dmg = cpp_expected_damage(ai_mon, mid, pl_mon, state, MAX_LUCK_C, -1, false, -1);
+        if (dmg >= pl_mon.hp) return true;
+    }
+    return false;
 }
 
 } // namespace ai_scorer

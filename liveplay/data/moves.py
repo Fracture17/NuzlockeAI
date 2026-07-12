@@ -2134,7 +2134,7 @@ PARALYSIS_MOVES: frozenset[Move] = frozenset({
     Move.THUNDER_WAVE, Move.STUN_SPORE, Move.GLARE, Move.NUZZLE, Move.ZAP_CANNON,
 })
 
-POISON_INFLICT_MOVES: frozenset[Move] = frozenset({Move.TOXIC, Move.POISON_POWDER})
+POISON_INFLICT_MOVES: frozenset[Move] = frozenset({Move.TOXIC, Move.POISON_POWDER, Move.POISON_GAS})
 
 SPEED_SETUP_MOVES: frozenset[Move] = frozenset({Move.AGILITY, Move.ROCK_POLISH, Move.AUTOTOMIZE})
 

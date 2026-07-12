@@ -33,6 +33,7 @@
 #include "ai_policy.h"
 #include "ai_damage.h"
 #include "ai_scorer.h"
+#include "ai_scorer_internal.h"  // exception_move_sees_kill, namespace ai_scorer
 #include "ai_analytic.h"
 #include "game_driver.h"
 #include "logger.h"           // CategoryBInjection / CategoryBOccurrenceCounters bindings
@@ -510,6 +511,24 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
                   return d;
               };
 
+              // Compute exception-kill flag and marginal sees_kill probability for
+              // non-damaging moves: p = exc ? 1.0 : 1 − Π_j count(raw_j < opp_hp)/16
+              // (rolls independent across moves, so product over all context slots).
+              bool exc = ai_scorer::exception_move_sees_kill(s, ai_idx);
+              double p_sees_kill_nd;
+              if (exc) {
+                  p_sees_kill_nd = 1.0;
+              } else {
+                  // Probability that NO context move kills = product of P(roll < hp) per move.
+                  double p_no_kill = 1.0;
+                  for (const auto& arr : ctx.roll_arrays) {
+                      int count_lt = 0;
+                      for (int32_t r : arr) if (r < opp_hp) ++count_lt;
+                      p_no_kill *= (double)count_lt / 16.0;
+                  }
+                  p_sees_kill_nd = 1.0 - p_no_kill;
+              }
+
               py::list py_actions, py_dists;
               for (const ExecAction& a : actions) {
                   py_actions.append(make_action_dict(a));
@@ -518,10 +537,19 @@ PYBIND11_MODULE(nuzlocke_engine_cpp, m) {
                   auto it = split_by_slot.find(a.move_slot);
                   if (a.kind == 0 && a.move_slot >= 0 && it != split_by_slot.end()) {
                       // Damaging move in context: blend kill/nokill/none branches.
-                      dist = cpp_blend_damage_dist(s, ai_idx, a, it->second.first, it->second.second, ai_fst);
+                      // sees_kill=false: damaging dists ignore the flag (no STATUS path).
+                      dist = cpp_blend_damage_dist(s, ai_idx, a, it->second.first, it->second.second, ai_fst, false);
                   } else {
-                      // Non-damaging or not in context: fixed p_highest=0.0, kills=false.
-                      dist = cpp_dist_action(s, ai_idx, a, 0.0, false, ai_fst);
+                      // Non-damaging: blend exact marginal p·dist(true) + (1−p)·dist(false).
+                      ScoreDistC d_false = cpp_dist_action(s, ai_idx, a, 0.0, false, ai_fst, false);
+                      ScoreDistC d_true  = cpp_dist_action(s, ai_idx, a, 0.0, false, ai_fst, true);
+                      double p_true = p_sees_kill_nd;
+                      double p_false = 1.0 - p_true;
+                      std::unordered_map<int32_t, double> merged;
+                      if (p_false > 0) for (auto [sc, pr] : d_false) merged[sc] += p_false * pr;
+                      if (p_true  > 0) for (auto [sc, pr] : d_true)  merged[sc] += p_true  * pr;
+                      for (auto& [sc, pr] : merged) dist.push_back({sc, pr});
+                      std::sort(dist.begin(), dist.end());
                   }
 
                   py::list d_list;

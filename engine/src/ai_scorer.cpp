@@ -42,7 +42,7 @@ bool cpp_ai_faster(const BattleState& state, int ai_idx) {
 // ---------------------------------------------------------------------------
 
 ScoreDistC cpp_dist_action(const BattleState& state, int ai_idx, const ExecAction& action,
-                           double p_highest, bool kills, bool ai_fst) {
+                           double p_highest, bool kills, bool ai_fst, bool sees_kill) {
     // Switch or recharge
     if (action.kind == AK_SWITCH) return {{0, 1.0}};
 
@@ -124,7 +124,7 @@ ScoreDistC cpp_dist_action(const BattleState& state, int ai_idx, const ExecActio
 
     // --- Poison ---
     if (ai_set_contains(POISON_INFLICT_MOVES, N_POISON_INFLICT_MOVES, move_id)) {
-        return dist_poison_move(state, ai_idx, move_id);
+        return dist_poison_move(state, ai_idx, move_id, sees_kill);
     }
 
     // --- Substitute ---
@@ -257,7 +257,7 @@ ScoreDistC cpp_dist_action(const BattleState& state, int ai_idx, const ExecActio
     }
 
     // --- STATUS-branch special handlers ---
-    return dist_status_special(state, ai_idx, move_id, ai_mon, pl_mon, ai_fst);
+    return dist_status_special(state, ai_idx, move_id, ai_mon, pl_mon, ai_fst, sees_kill);
 }
 
 // ---------------------------------------------------------------------------
@@ -265,18 +265,18 @@ ScoreDistC cpp_dist_action(const BattleState& state, int ai_idx, const ExecActio
 // ---------------------------------------------------------------------------
 
 ScoreDistC cpp_blend_damage_dist(const BattleState& state, int ai_idx, const ExecAction& action,
-                                 double p_kill, double p_nokill, bool ai_fst) {
+                                 double p_kill, double p_nokill, bool ai_fst, bool sees_kill) {
     double p_none = std::max(0.0, 1.0 - p_kill - p_nokill);
 
     // Build components in kill → nokill → none order (mirrors Python list order)
     struct Component { double w; ScoreDistC dist; };
     std::vector<Component> components;
     if (p_kill > 0)
-        components.push_back({p_kill, cpp_dist_action(state, ai_idx, action, 1.0, true, ai_fst)});
+        components.push_back({p_kill, cpp_dist_action(state, ai_idx, action, 1.0, true, ai_fst, sees_kill)});
     if (p_nokill > 0)
-        components.push_back({p_nokill, cpp_dist_action(state, ai_idx, action, 1.0, false, ai_fst)});
+        components.push_back({p_nokill, cpp_dist_action(state, ai_idx, action, 1.0, false, ai_fst, sees_kill)});
     if (p_none > 0)
-        components.push_back({p_none, cpp_dist_action(state, ai_idx, action, 0.0, false, ai_fst)});
+        components.push_back({p_none, cpp_dist_action(state, ai_idx, action, 0.0, false, ai_fst, sees_kill)});
 
     // Merge into sorted map (std::map preserves insertion order for same key — we use map for
     // accumulation, then convert to sorted vector). Same semantics as Python dict merge.

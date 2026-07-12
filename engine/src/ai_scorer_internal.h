@@ -82,6 +82,16 @@ inline constexpr int32_t MV_DEFOG             = 432;
 inline constexpr int32_t MV_TROP_KICK         = 688;
 inline constexpr int32_t MV_BREAKING_SWIPE    = 784;
 inline constexpr int32_t MV_WILL_O_WISP       = 261;
+inline constexpr int32_t MV_TOXIC             = 92;
+inline constexpr int32_t MV_POISON_GAS        = 139;
+inline constexpr int32_t MV_POISON_POWDER     = 77;
+inline constexpr int32_t MV_HEX               = 506;
+inline constexpr int32_t MV_DREAM_EATER       = 138;
+inline constexpr int32_t MV_NIGHTMARE         = 171;
+inline constexpr int32_t MV_SNORE             = 173;
+
+// Ability IDs (scorer-specific, continued)
+inline constexpr int32_t AB_MERCILESS         = 196;
 
 // Item IDs (scorer-specific)
 inline constexpr int32_t ITM_POWER_HERB       = 271;
@@ -426,12 +436,18 @@ ScoreDistC dist_setup(const BattleState& state, int ai_idx, SetupKind kind);
 ScoreDistC dist_tailwind(const BattleState& state, int ai_idx);
 ScoreDistC dist_trick_room(const BattleState& state, int ai_idx);
 ScoreDistC dist_terrain(const BattleState& state, int ai_idx);
-ScoreDistC dist_poison_move(const BattleState& state, int ai_idx, int32_t move_id);
+ScoreDistC dist_poison_move(const BattleState& state, int ai_idx, int32_t move_id, bool sees_kill);
 ScoreDistC dist_will_o_wisp(const BattleState& state, int ai_idx);
 ScoreDistC dist_status_special(const BattleState& state, int ai_idx, int32_t move_id,
-                               const PokemonState& ai_mon, const PokemonState& pl_mon, bool ai_fst);
+                               const PokemonState& ai_mon, const PokemonState& pl_mon,
+                               bool ai_fst, bool sees_kill);
 ScoreDistC dist_damage(const BattleState& state, int ai_idx, int32_t move_id, const MoveData& md,
                        double p_highest, bool kills, bool ai_fst);
+
+// True if any legal MOVE action is a trapping move or MV_FUTURE_SIGHT whose
+// expected damage (MAX_LUCK_C) >= opponent HP. Mirrors deterministic kill checks at
+// ai_scorer_dist.cpp:579-601 exactly.
+bool exception_move_sees_kill(const BattleState& state, int ai_idx);
 
 } // namespace ai_scorer
 

@@ -30,12 +30,14 @@ using ScoreDistC = std::vector<std::pair<int32_t, double>>;
 // Full score distribution for a single action (mirrors Python _dist_action).
 // p_highest: P(this move is highest damage); kills: whether it KOs the opponent.
 // ai_fst: true if AI acts before the player this turn.
+// sees_kill: true if another AI action kills or exception_move_sees_kill() is true
+//   (used by poison/status-special dists; ignored by damaging dists in this stage).
 ScoreDistC cpp_dist_action(const BattleState& state, int ai_idx, const ExecAction& action,
-                           double p_highest, bool kills, bool ai_fst);
+                           double p_highest, bool kills, bool ai_fst, bool sees_kill = false);
 
 // Blend three _dist_action branches by (p_kill, p_nokill) weights (mirrors _blend_damage_dist).
 ScoreDistC cpp_blend_damage_dist(const BattleState& state, int ai_idx, const ExecAction& action,
-                                 double p_kill, double p_nokill, bool ai_fst);
+                                 double p_kill, double p_nokill, bool ai_fst, bool sees_kill = false);
 
 // True if AI's effective speed >= player's (ties count as AI faster, per AI.md).
 bool cpp_ai_faster(const BattleState& state, int ai_idx);

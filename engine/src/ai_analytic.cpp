@@ -3,6 +3,7 @@
 // Critical invariant: cartesian product iterates LAST dimension fastest (mirrors itertools.product).
 #include "ai_analytic.h"
 #include "ai_scorer.h"
+#include "ai_scorer_internal.h"  // exception_move_sees_kill, namespace ai_scorer
 #include "ai_damage.h"
 #include "ai_shared.h"
 #include "orchestrate.h"
@@ -109,27 +110,29 @@ static int32_t max_possible_move_score(
     const BattleState& state, int ai_idx, const ExecAction& action,
     bool in_damage_ctx, double p_k, double p_nk, bool ai_fst)
 {
+    // sees_kill=false throughout: gate-neutral because unblocked sleep/toxic base
+    // is already 6 (>5), and blocked variants are negative in both sees_kill variants.
     if (in_damage_ctx) {
         // max over three cases: highest+kill, highest+nokill, not-highest
         int32_t s_hk = -999, s_hnk = -999;
         if (p_k > 0.0) {
-            ScoreDistC d = cpp_dist_action(state, ai_idx, action, 1.0, true, ai_fst);
+            ScoreDistC d = cpp_dist_action(state, ai_idx, action, 1.0, true, ai_fst, false);
             for (auto& [s, _] : d) s_hk = std::max(s_hk, s);
         }
         if (p_nk > 0.0) {
-            ScoreDistC d = cpp_dist_action(state, ai_idx, action, 1.0, false, ai_fst);
+            ScoreDistC d = cpp_dist_action(state, ai_idx, action, 1.0, false, ai_fst, false);
             for (auto& [s, _] : d) s_hnk = std::max(s_hnk, s);
         }
         // always compute s_none
         int32_t s_none = -999;
         {
-            ScoreDistC d = cpp_dist_action(state, ai_idx, action, 0.0, false, ai_fst);
+            ScoreDistC d = cpp_dist_action(state, ai_idx, action, 0.0, false, ai_fst, false);
             for (auto& [s, _] : d) s_none = std::max(s_none, s);
         }
         return std::max({s_hk, s_hnk, s_none});
     } else {
         // non-damaging: use dist at p_highest=0, kills=false
-        ScoreDistC d = cpp_dist_action(state, ai_idx, action, 0.0, false, ai_fst);
+        ScoreDistC d = cpp_dist_action(state, ai_idx, action, 0.0, false, ai_fst, false);
         int32_t best = -999;
         for (auto& [s, _] : d) best = std::max(best, s);
         return best;
@@ -273,13 +276,20 @@ std::vector<ActionProb> cpp_compute_action_probabilities(
             other_moves.push_back({i, a});
     }
 
-    // Build fixed dists for non-damaging move actions (independent of damage branch)
-    // other_dists_map: action index -> ScoreDistC
+    // Compute exception-move kill flag once per turn.
+    bool exc = ai_scorer::exception_move_sees_kill(state, ai_idx);
+
+    // Build fixed dists for non-damaging move actions in both sees_kill variants.
+    // Two parallel vectors: [0]=sees_kill=false, [1]=sees_kill=true.
+    // Damaging dists ignore sees_kill (sleep/toxic are STATUS moves, never reach
+    // dist_damage), so the get_dist cache key stays valid using sees_kill=false.
     std::vector<int> other_indices;
-    std::vector<ScoreDistC> other_dists_vec;
+    std::vector<ScoreDistC> other_dists_false_vec;  // sees_kill=false
+    std::vector<ScoreDistC> other_dists_true_vec;   // sees_kill=true
     for (auto& [i, a] : other_moves) {
         other_indices.push_back(i);
-        other_dists_vec.push_back(cpp_dist_action(state, ai_idx, *a, 0.0, false, ai_fst));
+        other_dists_false_vec.push_back(cpp_dist_action(state, ai_idx, *a, 0.0, false, ai_fst, false));
+        other_dists_true_vec.push_back(cpp_dist_action(state, ai_idx, *a, 0.0, false, ai_fst, true));
     }
 
     // Determine all_ineffective gate
@@ -308,7 +318,9 @@ std::vector<ActionProb> cpp_compute_action_probabilities(
     std::vector<double> probs(actions.size(), 0.0);
 
     if (damaging_moves.empty()) {
-        // No damaging moves: just enumerate over other_dists
+        // No damaging moves: no kill_slots possible, so sees_kill = exc alone.
+        const std::vector<ScoreDistC>& other_dists_vec =
+            exc ? other_dists_true_vec : other_dists_false_vec;
         accumulate_with_other(1.0,
             {}, {},
             other_indices, other_dists_vec,
@@ -340,13 +352,15 @@ std::vector<ActionProb> cpp_compute_action_probabilities(
         // key: j * 4 + (is_highest ? 2 : 0) + (kills ? 1 : 0)
         std::unordered_map<int, ScoreDistC> dist_cache;
 
+        // Damaging dists: sees_kill=false — damaging moves never reach dist_poison /
+        // dist_status_special, so the flag has no effect; cache key remains valid.
         auto get_dist = [&](int j, bool is_highest, bool kills) -> const ScoreDistC& {
             int cache_key = j * 4 + (is_highest ? 2 : 0) + (kills ? 1 : 0);
             auto it = dist_cache.find(cache_key);
             if (it != dist_cache.end()) return it->second;
             double p_h = is_highest ? 1.0 : 0.0;
             dist_cache[cache_key] = cpp_dist_action(
-                state, ai_idx, *dm_actions[j], p_h, kills, ai_fst);
+                state, ai_idx, *dm_actions[j], p_h, kills, ai_fst, false);
             return dist_cache[cache_key];
         };
 
@@ -356,11 +370,17 @@ std::vector<ActionProb> cpp_compute_action_probabilities(
         for (const DamageConfig& cfg : configs) {
             // Build dm_dists parallel to dm_indices_vec
             std::vector<ScoreDistC> dm_dists(m);
+            bool any_kill = false;
             for (int j = 0; j < m; ++j) {
                 bool ih = (bool)cfg.is_highest[j];
                 bool kl = (bool)cfg.kills[j];
                 dm_dists[j] = get_dist(j, ih, kl);
+                if (kl) any_kill = true;
             }
+
+            bool cfg_sees_kill = exc || any_kill;
+            const std::vector<ScoreDistC>& other_dists_vec =
+                cfg_sees_kill ? other_dists_true_vec : other_dists_false_vec;
 
             accumulate_with_other(cfg.weight,
                 dm_indices_vec, dm_dists,
