@@ -1,7 +1,16 @@
 # Known Bug: no faint-queue rebuild after post-KO replacements
 
-Status: **deferred** — user decision 2026-07-04 (Stage A exit gate review). Fix in the new
-repo under golden-trace verification. See record `faint_queue_no_rebuild_bug`.
+Status: **FIXED 2026-07-11** (C++, new repo). `cpp_drain_faint_queue` (orchestrate.cpp)
+now rebuilds the queue after each drain pass and keeps draining until no fainted active
+with a live bench remains — hazard-killed replacements are re-prompted immediately,
+matching the real game. Tests: `tests/test_faint_queue_rebuild.py` (red pre-fix, green
+post-fix). Gates: frozen 1028 + fast suite + native ctest clean; the 100k extended corpus
+lost exactly 2 stale Python-parity traces that encoded this bug — quarantined to
+`golden_traces_100k_quarantine/` (user decision: quarantine now, re-base corpus later; see
+TODO.md "Re-base the golden-trace corpus"). See record `faint_queue_no_rebuild_bug`.
+
+Original deferral: user decision 2026-07-04 (Stage A exit gate review) — fix in the new
+repo under golden-trace verification.
 
 ## Behavior
 
@@ -34,9 +43,12 @@ Repro: `python SCRIPTS/c17h_repro_battle.py --index 4287`
 The identical IndexError reproduces at pre-Stage-A commit 2294c69 — NOT a Stage A regression.
 Stage A's behavior-preservation claim is unaffected.
 
-## Proper fix (deferred)
+## Proper fix (DONE 2026-07-11)
 
-Rebuild the faint queue after applying replacements in BOTH engines (loop `_check_fainted` /
-`cpp_build_faint_queue` until no fainted active with live bench remains), matching the real game.
-This supersedes the settled "no queue rebuild" mirror decision and changes trajectories only for
-these rare battles. Requires: tests first, both engines in lockstep, golden-trace/parity re-run.
+Rebuilt the faint queue after applying replacements: `cpp_drain_faint_queue` loops
+`cpp_build_faint_queue` after each drain pass until no fainted active with a live bench
+remains, matching the real game. This supersedes the retired "no queue rebuild" mirror
+decision and changes trajectories only for the rare hazard-death battles. The old Python
+engine is retired and shares the bug, so no lockstep change was needed there — the C++
+engine is now the sole authority. Trajectory changes surfaced as 2 invalidated 100k traces
+(quarantined; corpus re-base deferred per user).

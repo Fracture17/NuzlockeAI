@@ -410,9 +410,9 @@ ExecAction cpp_action_from_json(const nlohmann::json& aj) {
     return a;
 }
 
-// Build the faint queue exactly as Python _check_fainted (simulator.py:815):
+// Build the faint queue as Python _check_fainted did (simulator.py:815):
 // for each side si in 0,1: if any bench mon alive → for each active slot whose active fainted
-// → append (si, slot_pos). No rebuild after replacements (mirrors Python's single-pass drain).
+// → append (si, slot_pos). Also called by cpp_drain_faint_queue to rebuild after replacements.
 std::vector<std::pair<int,int>> cpp_build_faint_queue(const BattleState& state) {
     std::vector<std::pair<int,int>> queue;
     for (int si = 0; si < 2; ++si) {
@@ -469,7 +469,12 @@ static std::vector<ExecAction> bench_switch_actions(const BattleState& state, in
 }
 
 // Drain the faint queue via policies; appends post_faint entries to action_log.
-// Mirrors Python _check_fainted + _phase_await_post_faint_switch drain (no queue rebuild).
+// After the queue empties, REBUILDS it (cpp_build_faint_queue) and keeps draining:
+// a replacement that dies to entry hazards during the drain is re-prompted, matching
+// the real game (record faint_queue_no_rebuild_bug — the retired Python engine's
+// single-pass drain gave the opponent a free turn against an empty slot).
+// Terminates: every hazard death permanently shrinks the side's alive pool, and the
+// rebuild only enqueues fainted actives whose side still has a live bench.
 void cpp_drain_faint_queue(BattleState& state,
                             std::vector<std::pair<int,int>>& faint_queue,
                             Policy* policies[2],
@@ -507,6 +512,12 @@ void cpp_drain_faint_queue(BattleState& state,
             auto it = std::find(faint_queue.begin(), faint_queue.end(), pair);
             if (it != faint_queue.end()) faint_queue.erase(it);
         }
+
+        // Rebuild: if a replacement died on entry (hazards), re-prompt while a live
+        // bench remains. Only refill once the current queue is exhausted so the
+        // original round-by-round order is preserved.
+        if (faint_queue.empty())
+            faint_queue = cpp_build_faint_queue(state);
     }
 }
 

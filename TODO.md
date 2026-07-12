@@ -1,5 +1,24 @@
 # TODO
 
+## Re-base the golden-trace corpus on the C++ engine (post-parity)
+The 1028 frozen corpus and the git-ignored 100k extended corpus were recorded from the
+retired Python engine to prove the C++ port was behavior-identical. That parity job is
+done. Now that the C++ engine intentionally diverges from old Python behavior when we fix
+Python-era bugs, each such fix invalidates any trace whose action stream or trajectory it
+changes — so byte-identical parity to the frozen snapshot increasingly fights correctness
+(the migration plan always intended to move off trace parity as the engine evolves).
+
+First casualty: the faint-queue rebuild fix (2026-07-11) invalidated 2 of the 100k traces
+(`trace_3878948979999869935`, `trace_5810762539831584088`), now quarantined in
+`golden_traces_100k_quarantine/` (see its README). Decision (user, 2026-07-11): quarantine
+now, re-base later.
+
+Fix: build a C++ self-play trace recorder (GameDriver + RecordingPolicy already exist) and
+regenerate both corpora from the current engine, converting them from a Python-parity
+referee into a true C++ self-regression gate. Until then, quarantine per-fix and lean on
+native C++ tests + targeted scenario tests. Revisit the frozen 1028 too (it's a committed
+gate; re-basing changes it).
+
 ## 2b. Doubles same-species target identification
 Damage events and HP-delta matching key off the target's *species* (`_sum_damage`,
 `_per_hit_damages`, candidate filtering). In doubles, two opposing Pokémon can share the

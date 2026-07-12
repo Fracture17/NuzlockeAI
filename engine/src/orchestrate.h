@@ -69,11 +69,12 @@ nlohmann::json cpp_action_to_json(const ExecAction& a);
 ExecAction cpp_action_from_json(const nlohmann::json& aj);
 
 // Build the post-faint replacement queue: (side, slot_pos) pairs for fainted actives with live bench.
-// Mirrors Python _check_fainted (simulator.py:815). No queue rebuild after replacements.
+// Mirrors Python _check_fainted (simulator.py:815).
 std::vector<std::pair<int,int>> cpp_build_faint_queue(const BattleState& state);
 
 // Drain the faint queue via policies; appends post_faint entries to action_log.
-// Mirrors Python _check_fainted + _phase_await_post_faint_switch drain (no queue rebuild).
+// Rebuilds the queue after each pass until no fainted active with live bench remains
+// (re-prompts replacements killed by entry hazards; record faint_queue_no_rebuild_bug).
 void cpp_drain_faint_queue(BattleState& state,
                             std::vector<std::pair<int,int>>& faint_queue,
                             Policy* policies[2],

@@ -1633,8 +1633,8 @@ updated = "2026-07-04T16:03:33.036Z"
 name = "faint_queue_no_rebuild_bug"
 file = ""
 confidence = "requirement"
-rationale = "KNOWN BUG, fix deferred to new repo (user, 2026-07-04): hazard-killed post-KO replacement is not re-prompted (no faint-queue rebuild, both engines); next turn starts with fainted active, unlike real game. Details/repro: RECORDS/FaintQueueBug.md"
-updated = "2026-07-04T18:49:21.294Z"
+rationale = "FIXED 2026-07-11 (C++): cpp_drain_faint_queue rebuilds via cpp_build_faint_queue each pass until no fainted active w/ live bench; hazard-killed replacements re-prompted. Forward-sim/solver only; sweep boundary unchanged. See FaintQueueBug.md."
+updated = "2026-07-12T05:30:31.371Z"
 
 [[record]]
 name = "trace-match-key"
