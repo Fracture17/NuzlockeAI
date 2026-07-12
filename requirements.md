@@ -2041,3 +2041,10 @@ file = "SCRIPTS/play.py"
 confidence = "requirement"
 rationale = "Both sides' HP-log/buffer keys are canonicalized to the resolved species display name (_canonical_team_key) so OCR jitter collapses to one key and unresolvable names fail loud. Empty team (pre-battle stub) falls back to raw lowercased name, no raise."
 updated = "2026-07-12T05:47:36.783Z"
+
+[[record]]
+name = "exc_move_kill_bonus_kb"
+file = "engine/src/ai_scorer_dist.cpp"
+confidence = "requirement"
+rationale = "Exception moves (Relic Song/Meteor Beam/Future Sight/trapping) excluded from HD: a KO scores kill bonus ONLY (fixed kb 6/3, +1 Moxie), no +6/+8 base, no variance; additive stacks. Matches ai.ts, AI.md [3,6]. Fixed 2026-07-11 (was flat / 6+kb var)."
+updated = "2026-07-12T07:44:22.031Z"

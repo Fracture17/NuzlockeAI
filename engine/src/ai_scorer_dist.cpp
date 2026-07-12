@@ -537,15 +537,35 @@ ScoreDistC dist_damage(const BattleState& state, int ai_idx, int32_t move_id,
     // Rollout: always +7
     if (move_id == MV_ROLLOUT) return {{7, 1.0}};
 
-    // Relic Song: Meloetta form-dependent
+    // Relic Song: Meloetta form-dependent additive (+10 base / -20 Pirouette).
+    // Excluded from HD, so the dispatcher passes kills=false; it runs its own kill
+    // check and stacks the kill bonus (kb only, no HD base, no variance) on the
+    // additive, matching ai.ts:673-702 + moveStringsToAdd push at ai.ts:1080-1093.
     if (move_id == MV_RELIC_SONG) {
-        return (ai_mon.species == SP_MELOETTA_PIROUETTE)
-            ? ScoreDistC{{-20, 1.0}} : ScoreDistC{{10, 1.0}};
+        int base = (ai_mon.species == SP_MELOETTA_PIROUETTE) ? -20 : 10;
+        int32_t dmg = cpp_expected_damage(ai_mon, move_id, pl_mon, state, MAX_LUCK_C,
+                                          -1, false, -1);
+        if (dmg >= pl_mon.hp) {
+            int kb = ai_fst ? 6 : 3;
+            int moxie_bonus = ai_set_contains(MOXIE_ABILITIES, N_MOXIE_ABILITIES, ai_mon.ability) ? 1 : 0;
+            return {{base + kb + moxie_bonus, 1.0}};
+        }
+        return {{base, 1.0}};
     }
 
-    // Meteor Beam: Power Herb conditional
+    // Meteor Beam: Power Herb conditional additive (+9 with Herb / -20 without).
+    // Excluded from HD; runs its own kill check and stacks kb only on the additive
+    // (ai.ts:673-702 + moveStringsToAdd push at ai.ts:2134-2148).
     if (move_id == MV_METEOR_BEAM) {
-        return (ai_mon.item == ITM_POWER_HERB) ? ScoreDistC{{9, 1.0}} : ScoreDistC{{-20, 1.0}};
+        int base = (ai_mon.item == ITM_POWER_HERB) ? 9 : -20;
+        int32_t dmg = cpp_expected_damage(ai_mon, move_id, pl_mon, state, MAX_LUCK_C,
+                                          -1, false, -1);
+        if (dmg >= pl_mon.hp) {
+            int kb = ai_fst ? 6 : 3;
+            int moxie_bonus = ai_set_contains(MOXIE_ABILITIES, N_MOXIE_ABILITIES, ai_mon.ability) ? 1 : 0;
+            return {{base + kb + moxie_bonus, 1.0}};
+        }
+        return {{base, 1.0}};
     }
 
     // Contrary: treat Overheat/Leaf Storm/Superpower as setup when not HD and not killing
@@ -644,9 +664,11 @@ ScoreDistC dist_damage(const BattleState& state, int ai_idx, int32_t move_id,
         int32_t fs_dmg = cpp_expected_damage(ai_mon, move_id, pl_mon, state, MAX_LUCK_C,
                                              -1, false, -1);
         if (fs_dmg >= pl_mon.hp) {
+            // Excluded from HD: kill bonus is kb ONLY (no +6/+8 base, no variance),
+            // matching ai.ts:698-702 and AI.md exception thresholds [3, 6].
             int kb = ai_fst ? 6 : 3;
             int moxie_bonus = ai_set_contains(MOXIE_ABILITIES, N_MOXIE_ABILITIES, ai_mon.ability) ? 1 : 0;
-            return {{6 + kb + moxie_bonus, 0.8}, {8 + kb + moxie_bonus, 0.2}};
+            return {{kb + moxie_bonus, 1.0}};
         }
         int score = (ai_fst && player_can_ko_ai(state, ai_idx)) ? 8 : 6;
         return {{score, 1.0}};
@@ -657,9 +679,11 @@ ScoreDistC dist_damage(const BattleState& state, int ai_idx, int32_t move_id,
         int32_t tm_dmg = cpp_expected_damage(ai_mon, move_id, pl_mon, state, MAX_LUCK_C,
                                              -1, false, -1);
         if (tm_dmg >= pl_mon.hp) {
+            // Excluded from HD: kill bonus is kb ONLY (no +6/+8 base, no variance),
+            // matching ai.ts:698-702 and AI.md exception thresholds [3, 6].
             int kb = ai_fst ? 6 : 3;
             int moxie_bonus = ai_set_contains(MOXIE_ABILITIES, N_MOXIE_ABILITIES, ai_mon.ability) ? 1 : 0;
-            return {{6 + kb + moxie_bonus, 0.8}, {8 + kb + moxie_bonus, 0.2}};
+            return {{kb + moxie_bonus, 1.0}};
         }
         return {{6, 0.8}, {8, 0.2}};
     }

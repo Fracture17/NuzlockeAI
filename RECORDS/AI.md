@@ -60,6 +60,10 @@ The following moves are **never** included in the HD competition — they do not
 
 **Kill bonuses still apply** to all of the above (except Explosion, Final Gambit, and Rollout — those skip kill-bonus scoring entirely as well, per the code). Relic Song, Meteor Beam, Future Sight, and trapping moves do receive kill bonuses when they kill.
 
+Because these four are excluded from HD, their KO score is the **kill bonus ONLY** — a fixed `+6` (AI faster / priority) or `+3` (AI slower), `+1` with a Moxie-family ability. There is **no `+6/+8` HD base and no `0.8/0.2` variance** (that is what the `[3, 6]` exception thresholds in §3 encode). Any move-specific additive stacks on top: Relic Song `+10`/`−20`, Meteor Beam `+9`/`−20`; Future Sight and trapping have no additive (their non-kill `+6/+8` is discarded on a KO). Example: a base-form Meloetta Relic Song that KOs while faster scores `10 + 6 = 16`.
+
+**[C++ status: ported (2026-07-11) — `dist_damage` (ai_scorer_dist.cpp) runs each exception move's own kill check (`cpp_expected_damage`, MAX_LUCK) and returns `{{additive + kb + moxie, 1.0}}` on a KO. This corrected a prior divergence where Relic Song/Meteor Beam returned a flat score (no kill bonus) and Future Sight/trapping over-counted a KO as `{6+kb, 8+kb}` with variance. Tests: tests/test_ai_exception_kill_bonus.py.]**
+
 ---
 
 ## 3. Kill Detection (`getAISeesKill`)
@@ -231,11 +235,12 @@ Otherwise:
 - Otherwise: **+6**
 
 ### Future Sight
-Excluded from HD. Score (before kill bonuses):
+Excluded from HD. Non-kill score:
 - AI faster AND dead to player: **+8**
 - Otherwise: **+6**
 
-Kill bonuses stack on top.
+On a KO the non-kill `+6/+8` is **discarded** and the score is the kill bonus only:
+`+6` faster / `+3` slower (`+1` Moxie). See §2 for the exception-move kill-bonus shape.
 
 ### Helping Hand / Follow Me
 In singles (current calc): **−6** always. (Score is −6 because the default +6 is suppressed when these moves are added to moveStringsToAdd.) Effectively disabled in singles.
@@ -271,8 +276,8 @@ When usable, score based on AI's current HP%:
 
 ### Meteor Beam
 Excluded from HD.
-- Holding Power Herb: **+9** (kill bonuses stack if it kills)
-- Otherwise: **−20**
+- Holding Power Herb: **+9** (on a KO, add the kill bonus only: `+9 + kb`, e.g. faster KO = 15)
+- Otherwise: **−20** (the kill bonus still stacks if it somehow KOs: `−20 + kb`)
 
 ### Poisoning Moves (Toxic, Poison Gas, Poison Powder)
 Never used (−40) if:
@@ -356,8 +361,8 @@ Default: return 0
 
 ### Relic Song
 Excluded from HD.
-- Meloetta base form: **+10** (kill bonuses stack)
-- Meloetta-Pirouette form: **−20**
+- Meloetta base form: **+10** (on a KO, add the kill bonus only: `+10 + kb`, e.g. faster KO = 16)
+- Meloetta-Pirouette form: **−20** (kill bonus still stacks if it KOs: `−20 + kb`)
 
 ### Rest
 - At exactly 100% HP: **−20**

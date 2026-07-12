@@ -244,39 +244,51 @@ def test_sleep_synergy_sees_kill_suppression():
 # Test 8 — Exception-move sees_kill (Whirlpool trapping kill vs 1-HP player)
 # ---------------------------------------------------------------------------
 
+def _hypnosis_score_dist(state, ai_idx: int = 1):
+    """Raw score distribution for the AI's Hypnosis move (slot 0), read from the
+    ai_action_dists binding. Asserting on the raw Hypnosis score isolates the
+    sleep-synergy bonus from move-selection competition: Hex is itself a damaging
+    move whose own score differs from Splash, which would confound a P(select)
+    comparison even when the Hypnosis bonus is identical."""
+    import json
+    import nuzlocke_engine_cpp as cpp
+    import liveplay.sweep_io as sweep_io
+    res = cpp.ai_action_dists(json.dumps(sweep_io.to_jsonable(state)), ai_idx)
+    for a, d in zip(res["actions"], res["dists"]):
+        if a["move_slot"] == 0:  # Hypnosis
+            return {int(s): round(float(p), 6) for s, p in d}
+    raise AssertionError("No Hypnosis action found")
+
+
 def test_sleep_synergy_exception_move_sees_kill():
-    """Whirlpool trapping kill on 1-HP player: P(Hypnosis|Hex)==P(Hypnosis|no Hex).
-    Full-HP player: they differ (bonus active).
+    """Whirlpool trapping kill on 1-HP player triggers exception_move_sees_kill, which
+    suppresses the Hex sleep-synergy bonus → Hypnosis raw score is identical with/without
+    Hex. At full HP Whirlpool does not kill → sees_kill=false → the bonus applies → the
+    scores differ. Asserting on the raw Hypnosis score (not P(select)) avoids the Hex-as-
+    competitor confound that pre-fix was masked by Whirlpool's inflated 12/14 kill score.
     """
     pl_1hp = make_mon(Species.CHANSEY, moves=(Move.SPLASH,))
     pl_1hp = dataclasses.replace(pl_1hp, hp=1)
     pl_full = make_mon(Species.CHANSEY, moves=(Move.SPLASH,))
 
-    # Use AI with Whirlpool (trapping) + Hypnosis; Hex provides synergy bonus
+    # AI with Whirlpool (trapping) + Hypnosis; Hex provides the sleep-synergy bonus.
     ai_hex = make_mon(Species.GENGAR, moves=(Move.HYPNOSIS, Move.WHIRLPOOL, Move.HEX))
     ai_no_hex = make_mon(Species.GENGAR, moves=(Move.HYPNOSIS, Move.WHIRLPOOL, Move.SPLASH))
 
-    state_1hp_hex = make_battle(pl_1hp, ai_hex)
-    state_1hp_no_hex = make_battle(pl_1hp, ai_no_hex)
-    state_full_hex = make_battle(pl_full, ai_hex)
-    state_full_no_hex = make_battle(pl_full, ai_no_hex)
-
-    p_1hp_hex = _prob_for_move(state_1hp_hex, Move.HYPNOSIS)
-    p_1hp_no_hex = _prob_for_move(state_1hp_no_hex, Move.HYPNOSIS)
-    p_full_hex = _prob_for_move(state_full_hex, Move.HYPNOSIS)
-    p_full_no_hex = _prob_for_move(state_full_no_hex, Move.HYPNOSIS)
-
-    # At 1 HP: Whirlpool kills → exception_move_sees_kill → sees_kill=true → no bonus
-    assert abs(p_1hp_hex - p_1hp_no_hex) < 1e-9, (
+    # At 1 HP: Whirlpool kills → exception_move_sees_kill → sees_kill=true → bonus suppressed.
+    d_1hp_hex = _hypnosis_score_dist(make_battle(pl_1hp, ai_hex))
+    d_1hp_no_hex = _hypnosis_score_dist(make_battle(pl_1hp, ai_no_hex))
+    assert d_1hp_hex == d_1hp_no_hex, (
         f"exception_move_sees_kill should suppress sleep synergy: "
-        f"hex={p_1hp_hex:.6f}, no_hex={p_1hp_no_hex:.6f}"
+        f"hex={d_1hp_hex}, no_hex={d_1hp_no_hex}"
     )
-    # At full HP: Whirlpool doesn't kill → sees_kill=false → bonus active → distributions differ.
-    # (Hex competes as a damage move so P(Hypnosis) may be lower despite the synergy bonus;
-    # what matters is that the outcome differs from the no-Hex baseline — not the direction.)
-    assert abs(p_full_hex - p_full_no_hex) > 1e-9, (
-        f"At full HP Hex synergy should change Hypnosis probability: "
-        f"hex={p_full_hex:.4f}, no_hex={p_full_no_hex:.4f}"
+
+    # At full HP: Whirlpool doesn't kill → sees_kill=false → bonus active → scores differ.
+    d_full_hex = _hypnosis_score_dist(make_battle(pl_full, ai_hex))
+    d_full_no_hex = _hypnosis_score_dist(make_battle(pl_full, ai_no_hex))
+    assert d_full_hex != d_full_no_hex, (
+        f"At full HP Hex synergy should change the Hypnosis score: "
+        f"hex={d_full_hex}, no_hex={d_full_no_hex}"
     )
 
 
