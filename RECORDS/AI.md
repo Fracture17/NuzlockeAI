@@ -287,7 +287,7 @@ Additional bonus (38% of the time), only when AI does NOT see a kill AND player 
 
 **Code discrepancy:** AI.md lists Venoshock as a qualifying combo move alongside Hex and Venom Drench. **Venoshock is not in the code.** Only Hex, Venom Drench, and ability Merciless are checked.
 
-**[C++ status: resolved/not applicable — the entire Hex/Venom Drench/Merciless +2 combo bonus is absent from the C++ implementation; dist_poison_move returns a flat +6 (ai_scorer_dist.cpp:218). The ai.ts combo-bonus block was not ported; Venoshock's absence within it is moot.]**
+**[C++ status: ported (Stage 2) — dist_poison_move (ai_scorer_dist.cpp:~240) implements the full combo bonus: Hex or ability Merciless at 38% rate when player deals 0 damage and player HP > 20% and !sees_kill → +2 tox_score, returning {{8,0.38},{6,0.62}}. Venom Drench and Venoshock omitted — not in the Move enum. Tests in tests/test_ai_toxic_combo.py.]**
 
 ### Protect / King's Shield / Spiky Shield / Baneful Bunker / Detect / Obstruct
 All scored identically.
@@ -717,7 +717,7 @@ The code blocks Stun Spore on Electric-type players (`moveName == "Stun Spore" &
 **AI.md says:** "AI mon has Hex, Venom Drench, Venoshock or the ability Merciless" triggers the +2 bonus.  
 **Code checks:** Only Hex, Venom Drench, and ability Merciless. Venoshock is absent.
 
-**[C++ status: resolved/not applicable — the entire combo bonus block was not ported to C++; dist_poison_move returns a flat +6 (ai_scorer_dist.cpp:218). Venoshock's absence is subsumed by the block being omitted entirely.]**
+**[C++ status: ported (Stage 2) — combo bonus is now implemented; Venoshock and Venom Drench are intentionally omitted (not in the Move enum). Only Hex and ability Merciless qualify. See dist_poison_move (ai_scorer_dist.cpp:~240).]**
 
 ### BUG: Sun Recovery Uses 100% Heal Rate
 Morning Sun / Synthesis / Moonlight in Sun call `shouldAIRecover(1.0)` but the actual heal is 2/3 (67%). This inflates the AI's willingness to recover in Sun and has a TODO comment in the code.
@@ -748,7 +748,7 @@ AI.md only mentions "Trop Kick, Skitter Smack, etc." for the Atk/SpAtk reduction
 ### DOC OMISSION: Hypnosis Is in the Sleep Group
 AI.md lists Yawn, Dark Void, Grass Whistle, Sing. Hypnosis uses the same code block.
 
-**[C++ status: fixed — ai_scorer_dist.cpp:302: unified sleep-move branch covers Yawn, Hypnosis, Sing, Grass Whistle, and Dark Void with the full −20 gating (existing status, Electric/Misty terrain, Insomnia/Vital Spirit/Sweet Veil — Sweet Veil was also missing from the old Yawn-only branch). Tests in tests/test_ai_sleep_truant.py. KNOWN SIMPLIFICATION: the ai.ts 25%-rate sleep-synergy bonus (+1 base, +1 Dream Eater/Nightmare, +1 Hex; ai.ts:1791-1810) is NOT implemented — it needs an aiSeesKill concept the status path lacks; the analogous Toxic 38%-rate bonus was likewise never ported.]**
+**[C++ status: fixed and extended (Stage 2) — ai_scorer_dist.cpp:~355: unified sleep-move branch with full −20 gating. 25% sleep-synergy bonus now ported: ss = 1 + (Dream Eater/Nightmare AND !player Snore/Sleep Talk ? 1 : 0) + (AI has Hex ? 1 : 0); dist {{6+ss,0.25},{6,0.75}} when !sees_kill. Tests in tests/test_ai_sleep_truant.py (gating) and tests/test_ai_toxic_combo.py (synergy + sees_kill suppression).]**
 
 ### DOC OMISSION: Spiky Shield, Baneful Bunker, Detect, Obstruct
 AI.md says "King's Shield has no unique AI" but doesn't mention Spiky Shield, Baneful Bunker, Detect, or Obstruct. All five are handled identically to Protect in the code.

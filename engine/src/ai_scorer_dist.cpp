@@ -213,20 +213,59 @@ ScoreDistC dist_terrain(const BattleState& state, int ai_idx) {
 }
 
 // ---------------------------------------------------------------------------
+// _player_deals_zero_damage
+// True iff the player has no move with PP>0 and base_power>0 that deals
+// non-zero damage against the AI mon. Luck profile is immaterial at 0 (0
+// iff type-immune or no damaging move); mirrors the max-damage loop in
+// should_recover (ai_scorer_internal.h:355-365).
+// ---------------------------------------------------------------------------
+static bool player_deals_zero_damage(const BattleState& state, int ai_idx) {
+    const PokemonState& ai_mon = active_mon(state, ai_idx);
+    const PokemonState& pl_mon = active_mon(state, 1 - ai_idx);
+    for (int slot = 0; slot < 4; ++slot) {
+        int32_t mid = move_id_at(pl_mon, slot);
+        if (mid == MV_NONE) continue;
+        if (move_pp_at(pl_mon, slot) == 0) continue;
+        const MoveData* md = ai_move_data_get(mid);
+        if (!md || md->base_power == 0) continue;
+        int32_t dmg = cpp_expected_damage(pl_mon, mid, ai_mon, state, AVERAGE_LUCK_C,
+                                          -1, false, -1);
+        if (dmg > 0) return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // _dist_poison_move
 // ---------------------------------------------------------------------------
 ScoreDistC dist_poison_move(const BattleState& state, int ai_idx, int32_t move_id, bool sees_kill) {
     const PokemonState& ai_mon = active_mon(state, ai_idx);
     const PokemonState& pl_mon = active_mon(state, 1 - ai_idx);
-    (void)sees_kill;  // accepted but unused in this stage; consumers added in stage 2
-    // Toxic blocked on Poison/Steel unless Corrosion
-    if (move_id == MV_TOXIC) {
-        bool blocked = false;
-        for (int32_t t : pl_mon.types)
-            if (t == TYPE_POISON || t == TYPE_STEEL) { blocked = true; break; }
-        if (blocked && ai_mon.ability != AB_CORROSION) return {{-40, 1.0}};
+
+    // All three moves: player already has status → -40
+    if (pl_mon.status != STATUS_NONE) return {{-40, 1.0}};
+
+    // Poison/Steel type blocks unless AI has Corrosion
+    bool type_blocked = false;
+    for (int32_t t : pl_mon.types)
+        if (t == TYPE_POISON || t == TYPE_STEEL) { type_blocked = true; break; }
+    if (type_blocked && ai_mon.ability != AB_CORROSION) return {{-40, 1.0}};
+
+    // Base +6, plus optional combo bonus at 38% rate when conditions met
+    if (pl_mon.hp * 100 / pl_mon.max_hp > 20 && !sees_kill) {
+        int tox_score = 0;
+        // +2 if player deals zero damage AND (AI has Hex OR AI ability Merciless).
+        // Venom Drench omitted — not in the Move enum.
+        if (player_deals_zero_damage(state, ai_idx)) {
+            bool ai_has_hex = false;
+            for (int slot = 0; slot < 4; ++slot)
+                if (move_id_at(ai_mon, slot) == MV_HEX) { ai_has_hex = true; break; }
+            if (ai_has_hex || ai_mon.ability == AB_MERCILESS)
+                tox_score = 2;
+        }
+        if (tox_score == 2)
+            return {{6 + tox_score, 0.38}, {6, 0.62}};
     }
-    if (pl_mon.status != STATUS_NONE) return {{-20, 1.0}};
     return {{6, 1.0}};
 }
 
@@ -307,7 +346,30 @@ ScoreDistC dist_status_special(const BattleState& state, int ai_idx, int32_t mov
         if (state.terrain == TE_ELECTRIC || state.terrain == TE_MISTY) return {{-20, 1.0}};
         if (pl_mon.ability == AB_INSOMNIA || pl_mon.ability == AB_VITAL_SPIRIT
             || pl_mon.ability == AB_SWEET_VEIL) return {{-20, 1.0}};
-        return {{6, 1.0}};
+        if (sees_kill) return {{6, 1.0}};
+
+        // Sleep synergy bonus (ai.ts:1791-1810): ss accumulates 3 checks.
+        // PP is ignored for all moveset checks — mirrors findIndex semantics.
+        int ss = 1;
+        // +1 if AI has Dream Eater or Nightmare AND player has neither Snore nor Sleep Talk
+        bool ai_has_dreameater_nightmare = false;
+        for (int slot = 0; slot < 4; ++slot) {
+            int32_t mid = move_id_at(ai_mon, slot);
+            if (mid == MV_DREAM_EATER || mid == MV_NIGHTMARE) { ai_has_dreameater_nightmare = true; break; }
+        }
+        if (ai_has_dreameater_nightmare) {
+            bool pl_has_snore_or_sleep_talk = false;
+            for (int slot = 0; slot < 4; ++slot) {
+                int32_t mid = move_id_at(pl_mon, slot);
+                if (mid == MV_SNORE || mid == MV_SLEEP_TALK) { pl_has_snore_or_sleep_talk = true; break; }
+            }
+            if (!pl_has_snore_or_sleep_talk) ss += 1;
+        }
+        // +1 if AI has Hex
+        for (int slot = 0; slot < 4; ++slot)
+            if (move_id_at(ai_mon, slot) == MV_HEX) { ss += 1; break; }
+
+        return {{6 + ss, 0.25}, {6, 0.75}};
     }
 
     // Scary Face
