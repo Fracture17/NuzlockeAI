@@ -1,6 +1,6 @@
 # NuzlockeAI Architecture
 
-**Goal:** Real-time battle AI for Pokémon Run & Bun (Emerald hack) running in mGBA; OCRs the emulator screen to track battle state. This repo (Stage C) holds the C++ engine and the Python live-play layer; the candidate-sweep re-point lands at Stage E.
+**Goal:** Real-time battle AI for Pokémon Run & Bun (Emerald hack) running in mGBA; OCRs the emulator screen to track battle state. This repo holds the C++ engine and the Python live-play layer; the Stage E sweep re-point is complete.
 
 **Layout:** `engine/` = C++ engine (CMake, pybind11 module `nuzlocke_engine_cpp`, Catch2 native tests); `liveplay/` = Python live-play package; `tests/`, `SCRIPTS/`, `RECORDS/` at top level.
 
@@ -20,6 +20,6 @@
 
 **Golden-trace parity:** frozen corpus `tests/fixtures/golden_traces/` (1028 traces) replays through `GameDriver` forced replay (`forced_trace.h`) via `SCRIPTS/replay_golden_traces.py`, asserting winner/turn/fingerprint identity. The 100k corpus (`golden_traces_100k/`, git-ignored) is the extended gate.
 
-**Stage E seam:** `liveplay/engine_select.py` — `enumerate_legal_actions`, `compute_action_probabilities`, and `run_candidate_sweep` are all live (C++-backed); sweep orchestration lives in `liveplay/sweep_*.py` over `liveplay/sweep_driver.py` (per-trial C++ turn driver via `cpp_driver.run_one_turn_cpp`/`apply_switch_cpp`). The old repo (`PycharmProjects/NuzlockeAI`) stays the frozen parity referee until E6 retirement.
+**Stage E seam:** `liveplay/engine_select.py` — `enumerate_legal_actions`, `compute_action_probabilities`, and `run_candidate_sweep` are all live (C++-backed); sweep orchestration lives in `liveplay/sweep_*.py` over `liveplay/sweep_driver.py` (per-trial C++ turn driver via `cpp_driver.run_one_turn_cpp`/`apply_switch_cpp`). The old repo (`PycharmProjects/NuzlockeAI`) is retired (2026-07-11) — frozen in place as a read-only archive; see `RECORDS/C++Transition.md`.
 
 **Stress test:** `SCRIPTS/stress_test.py` — loops battles from `States/` savestates, 100% `RandomPolicy`, logs to `/tmp/vision/stress/`.

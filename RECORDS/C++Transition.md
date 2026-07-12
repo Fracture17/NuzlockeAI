@@ -12,6 +12,21 @@ plan has been superseded. The current plan is:
   replaces the greedy/NN approach. The NN models and `sgz/` training infrastructure were
   dropped from this repo.
 
+## Old-repo retirement (2026-07-11)
+
+The old repo (`/home/Fracture/PycharmProjects/NuzlockeAI`) is **retired**: frozen in
+place as a read-only archive per user decision — nothing deleted, nothing to be
+modified. Final sweep confirmed zero code/runtime dependencies from this repo (ROM in
+`~/Downloads`, mgba-qt in `~/.local/bin`, `States/` byte-identical here, codegen reads
+`liveplay/data/`), and no uncommitted work there. Carried before freezing:
+`RECORDS/EXPYield.md` + `EXPYieldExtra.md` (hand-verified exp-yield source data).
+Left in the archive (still readable if ever needed): old Python engine/AI issue
+trackers (`AbilityIssues/AIIssues/ItemIssues/MechanicIssues/MoveIssues/Issues.md`),
+`NN.md` (abandoned v1 NN), old `ARCHITECTURE.md`/`ADVANCED.md`, the 809-file
+`tests/ExhaustiveTests/` Python-engine suite (18 StaticIssues regression tests noted
+as port candidates in `RECORDS/StaticIssues.md`), and ~2.3 GB of v1 NN training
+artifacts (`checkpoints/`, `TrainingData/`).
+
 Path references in the historical sections below reflect the old-repo layout (`cpp/` →
 now `engine/`, `src/` → now `liveplay/`); they are preserved as-is since they describe
 completed work.

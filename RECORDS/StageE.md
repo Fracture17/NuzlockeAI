@@ -61,13 +61,13 @@ on the emulator from this repo (play.py and stress_test.py).
 - `tests/test_cpp_c17g_gate.py` record scope is dangling (test not carried); decide the
   gate's replacement or retire the record.
 
-## 7. Docs debt
+## 7. Docs debt [DONE 2026-07-11 — StaticIssues.md migrated (CARRIED 6/CLOSED 31); AI.md marking pass done; the 2 surfaced AI gaps (sleep-move blocks, Truant incapacitation) fixed with tests]
 - `StaticIssues.md` (old repo): living sweep/state-transition audit — mine still-open
   entries and carry/close when the sweep moves.
 - `RECORDS/AI.md`: audit §5.1 asked to "mark resolved inline discrepancies" — was carried
   as-is at Stage C; do the marking pass when the C++ AI is the sole authority.
 
-## 8. Old-repo retirement
+## 8. Old-repo retirement [DONE 2026-07-11 — frozen in place as read-only archive; EXPYield tables carried; see C++Transition.md "Old-repo retirement"]
 - Final sweep of the old repo for anything still referenced (States/ savestates,
   mGBA configs, reference material), archive it, and update
   `RECORDS/C++Transition.md` + memory to record retirement.
