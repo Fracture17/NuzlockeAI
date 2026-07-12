@@ -1969,8 +1969,8 @@ updated = "2026-07-11T01:36:49.087Z"
 name = "sweep_boundary_flow"
 file = "liveplay/sweep_driver.py"
 confidence = "settled"
-rationale = "Boundary = one run_one_turn_cpp(finalize_on_post_faint=True); snapshot faints ONCE; player fainted-with-bench returns WITHOUT applying opp switches; else apply_switch_cpp per snapshot order; no re-scan (preserves faint_queue_no_rebuild_bug)."
-updated = "2026-07-11T01:37:03.794Z"
+rationale = "Boundary=one run_one_turn_cpp(finalize_on_post_faint=True); faints snapshotted ONCE, <=1 replacement/side/boundary, no re-scan. Hazard-killed replacements re-prompt next boundary; Step-0 always intercepts fainted-active-with-bench, so no free turn."
+updated = "2026-07-12T06:57:02.399Z"
 
 [[record]]
 name = "extra_pre_inject_deferred"

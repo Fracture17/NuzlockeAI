@@ -479,6 +479,123 @@ class TestBoundaryFlow:
         ), f"Expected DAMAGE events from turn and/or entry hazard, got: {damages}"
 
 
+class TestPostFaintHazardChain:
+    """Post-KO replacements that die to entry hazards, in the LIVE-PLAY sweep path.
+
+    The forward-sim engine (cpp_drain_faint_queue) rebuilds its faint queue and
+    re-prompts a hazard-killed replacement within one call. The sweep does NOT: it
+    snapshots faints once and applies at most one replacement per side per boundary
+    (record sweep_boundary_flow), because each replacement death is a SEPARATE observed
+    emulator event that arrives as the next decision boundary. These tests lock that
+    behavior for BOTH sides and prove the safety invariant: a fainted active with a
+    living bench is always intercepted by the post-faint branch on the next call, so the
+    sweep never runs a normal turn against an empty slot (its analog of the engine fix).
+    """
+
+    @staticmethod
+    def _sr_side(*mons):
+        from liveplay.state.side import SideState
+        return SideState(team=list(mons), active_indices=[0],
+                         side_conditions=[(SideCondition.STEALTH_ROCK, -1)])
+
+    def test_opp_replacement_dies_to_hazards_yields_boundary_not_free_turn(self):
+        """Player OHKOs opp; the sent-in replacement dies to Stealth Rock. Only ONE opp
+        switch is consumed even though two are supplied — the result is a coherent
+        party-prompt boundary (opp active fainted, a live bench remains), never a turn
+        run against the empty slot."""
+        from liveplay.state.side import SideState
+        from liveplay.state.battle import BattleState
+        killer = make_mon(Species.MACHAMP, moves=(Move.TACKLE,), level=100)
+        opp0 = make_mon(Species.RATTATA, moves=(Move.SPLASH,), hp=1)
+        opp1 = make_mon(Species.RATTATA, moves=(Move.SPLASH,), hp=1)
+        opp2 = make_mon(Species.RATTATA, moves=(Move.SPLASH,), hp=1)
+        state = BattleState(sides=(
+            SideState(team=[killer], active_indices=[0]),
+            self._sr_side(opp0, opp1, opp2),
+        ))
+        sw = lambda n: Action(kind=ActionKind.SWITCH, switch_to_slot=n, source_slot=0)
+        result = run_to_decision_boundary(
+            state, slot(0), slot(0), SweepConfig(), opp_switch_actions=(sw(1), sw(2)))
+        assert result is not None
+        # First replacement was applied (active is now slot 1) and died to Stealth Rock.
+        assert result.sides[1].active_indices[0] == 1
+        assert active(result, 1).fainted
+        # The SECOND supplied switch was NOT consumed this boundary; its mon is still alive.
+        assert not result.sides[1].team[2].fainted
+        # Coherent post-faint boundary: fainted active + living bench (the next call resolves it).
+        assert has_fainted_active(result)
+
+    def test_opp_hazard_chain_resolves_across_boundaries(self):
+        """Feeding that boundary back with the next replacement resolves the chain: the
+        second replacement also dies to Stealth Rock, wiping the opponent. No exception,
+        no fainted active silently starting a turn."""
+        from liveplay.state.side import SideState
+        from liveplay.state.battle import BattleState
+        killer = make_mon(Species.MACHAMP, moves=(Move.TACKLE,), level=100)
+        opp0 = make_mon(Species.RATTATA, moves=(Move.SPLASH,), hp=1)
+        opp1 = make_mon(Species.RATTATA, moves=(Move.SPLASH,), hp=1)
+        opp2 = make_mon(Species.RATTATA, moves=(Move.SPLASH,), hp=1)
+        state = BattleState(sides=(
+            SideState(team=[killer], active_indices=[0]),
+            self._sr_side(opp0, opp1, opp2),
+        ))
+        sw = lambda n: Action(kind=ActionKind.SWITCH, switch_to_slot=n, source_slot=0)
+        b1 = run_to_decision_boundary(
+            state, slot(0), slot(0), SweepConfig(), opp_switch_actions=(sw(1),))
+        assert b1 is not None and has_fainted_active(b1)
+        # Next boundary: the opponent's post-faint replacement comes via action1 (Step 0).
+        b2 = run_to_decision_boundary(b1, slot(0), sw(2), SweepConfig())
+        assert b2 is not None
+        # Second replacement died to Stealth Rock too — opponent fully fainted.
+        assert all(m.fainted for m in b2.sides[1].team)
+
+    def test_player_replacement_dies_to_hazards_resolves_across_boundaries(self):
+        """Opponent OHKOs the player's active; the player's replacement then dies to
+        Stealth Rock. Each step is a distinct party-prompt boundary — the player chain
+        resolves one replacement per boundary with no exception and no free turn."""
+        from liveplay.state.side import SideState
+        from liveplay.state.battle import BattleState
+        p0 = make_mon(Species.RATTATA, moves=(Move.SPLASH,), hp=1)
+        p1 = make_mon(Species.RATTATA, moves=(Move.SPLASH,), hp=1)
+        p2 = make_mon(Species.RATTATA, moves=(Move.SPLASH,), hp=1)
+        opp = make_mon(Species.MACHAMP, moves=(Move.TACKLE,), level=100)
+        state = BattleState(sides=(
+            self._sr_side(p0, p1, p2),
+            SideState(team=[opp], active_indices=[0]),
+        ))
+        sw = lambda n: Action(kind=ActionKind.SWITCH, switch_to_slot=n, source_slot=0)
+        # Turn: player active faints, boundary returned with a live bench.
+        b1 = run_to_decision_boundary(state, slot(0), slot(0), SweepConfig())
+        assert b1 is not None
+        assert active(b1, 0).fainted
+        assert not b1.sides[0].team[1].fainted
+        # Next boundary: apply the player's replacement (Step 0) — it dies to Stealth Rock.
+        b2 = run_to_decision_boundary(b1, sw(1), slot(0), SweepConfig())
+        assert b2 is not None
+        assert b2.sides[0].active_indices[0] == 1
+        assert active(b2, 0).fainted
+        assert not b2.sides[0].team[2].fainted  # third mon still awaits the next boundary
+
+    def test_post_faint_boundary_missing_switch_filters_candidate_loud(self, capsys):
+        """Safety net: at a post-faint boundary a fainted active MUST receive a switch.
+        A missing replacement action drops the candidate (returns None) and logs loudly,
+        rather than silently proceeding — upstream this halts once all candidates drop."""
+        from liveplay.state.side import SideState
+        from liveplay.state.battle import BattleState
+        reset_seen_errors()
+        fainted = make_mon(Species.RATTATA, moves=(Move.SPLASH,))._replace(hp=0, fainted=True)
+        bench = make_mon(Species.SNORLAX, moves=(Move.SPLASH,))
+        opp = make_mon(Species.MACHAMP, moves=(Move.TACKLE,), level=100)
+        state = BattleState(sides=(
+            SideState(team=[fainted, bench], active_indices=[0]),
+            SideState(team=[opp], active_indices=[0]),
+        ))
+        # action0=None → no replacement supplied for the fainted player active.
+        result = run_to_decision_boundary(state, None, slot(0), SweepConfig())
+        assert result is None
+        assert "sweep" in capsys.readouterr().err.lower()
+
+
 # ---------------------------------------------------------------------------
 # Error handling tests
 # ---------------------------------------------------------------------------
