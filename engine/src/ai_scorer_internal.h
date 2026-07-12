@@ -64,6 +64,10 @@ inline constexpr int32_t MV_IMPRISON          = 286;
 inline constexpr int32_t MV_SLEEP_TALK        = 214;
 inline constexpr int32_t MV_LEECH_SEED        = 73;
 inline constexpr int32_t MV_YAWN              = 281;
+inline constexpr int32_t MV_HYPNOSIS          = 95;
+inline constexpr int32_t MV_SING              = 47;
+inline constexpr int32_t MV_GRASS_WHISTLE     = 320;
+inline constexpr int32_t MV_DARK_VOID         = 464;
 inline constexpr int32_t MV_SCARY_FACE        = 184;
 inline constexpr int32_t MV_HELPING_HAND      = 270;
 inline constexpr int32_t MV_FOLLOW_ME         = 266;
@@ -109,6 +113,8 @@ inline constexpr int32_t AB_SHELL_ARMOR       = 75;
 inline constexpr int32_t AB_BATTLE_ARMOR      = 4;
 inline constexpr int32_t AB_INSOMNIA          = 15;
 inline constexpr int32_t AB_VITAL_SPIRIT      = 72;
+inline constexpr int32_t AB_SWEET_VEIL        = 175;
+inline constexpr int32_t AB_TRUANT            = 54;
 inline constexpr int32_t AB_OVERCOAT          = 142;
 inline constexpr int32_t AB_UNAWARE           = 109;
 
@@ -132,6 +138,7 @@ inline constexpr int32_t TYPE_FLYING          = 9;
 
 // Volatile bitmask values
 inline constexpr int32_t VOL_RECHARGING       = 256;
+inline constexpr int32_t VOL_TRUANT_LOAFING   = 16777216;
 inline constexpr int32_t VOL_SUBSTITUTE       = 4096;
 inline constexpr int32_t VOL_LEECH_SEEDED     = 2;
 inline constexpr int32_t VOL_CURSED           = 4;
@@ -262,9 +269,11 @@ inline bool is_type_immune(const MoveData& md, const PokemonState& defender) {
     return false;
 }
 
+// Returns true when mon cannot act: asleep, frozen, recharging, or Truant-loafing.
 inline bool is_incapacitated(const PokemonState& mon) {
     return (mon.status == STATUS_SLEEP || mon.status == STATUS_FREEZE
-            || (mon.volatiles & VOL_RECHARGING));
+            || (mon.volatiles & VOL_RECHARGING)
+            || (mon.ability == AB_TRUANT && (mon.volatiles & VOL_TRUANT_LOAFING)));
 }
 
 inline bool has_protect_debuff(const PokemonState& mon) {

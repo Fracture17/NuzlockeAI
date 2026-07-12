@@ -728,7 +728,7 @@ Morning Sun / Synthesis / Moonlight in Sun call `shouldAIRecover(1.0)` but the a
 Code: `playerIncapacitated = playerStatus == "frz" || playerStatus == "slp"`  
 AI.md also lists recharging (after Hyper Beam etc.) and Truant loafing. Neither is implemented.
 
-**[C++ status: partially fixed — ai_scorer_internal.h:265. C++ `is_incapacitated` covers freeze, sleep, AND `VOL_RECHARGING`. Truant loafing (`TRUANT_LOAFING_BIT`) is still absent from this check. Recharging: fixed. Truant: UNRESOLVED — not in divergence logs; needs decision on whether to reproduce or correct.]**
+**[C++ status: fixed — ai_scorer_internal.h:270. C++ `is_incapacitated` covers freeze, sleep, `VOL_RECHARGING`, and Truant loafing (`AB_TRUANT` + `VOL_TRUANT_LOAFING`). Intentional correction of the ai.ts TODO (ai.ts:894); tests in tests/test_ai_sleep_truant.py.]**
 
 ### DOC OMISSION: Counter and Mirror Coat Excluded from HD
 AI.md does not mention that Counter and Mirror Coat are excluded from the highest-damage competition. They are listed in the `calculateHighestDamage` exclusion array in code.
@@ -748,7 +748,7 @@ AI.md only mentions "Trop Kick, Skitter Smack, etc." for the Atk/SpAtk reduction
 ### DOC OMISSION: Hypnosis Is in the Sleep Group
 AI.md lists Yawn, Dark Void, Grass Whistle, Sing. Hypnosis uses the same code block.
 
-**[C++ status: UNRESOLVED — Yawn has dedicated handling at ai_scorer_dist.cpp:302 (with Insomnia/Vital Spirit/terrain checks), but Hypnosis, Sing, Grass Whistle, and Dark Void all fall through to the bare +6 default (ai_scorer_dist.cpp:460). None of the sleep-group checks (Insomnia, Vital Spirit, Electric/Misty Terrain, existing status) are applied to these moves. Not in divergence logs; needs decision on whether to add the checks or accept the simplified behavior.]**
+**[C++ status: fixed — ai_scorer_dist.cpp:302: unified sleep-move branch covers Yawn, Hypnosis, Sing, Grass Whistle, and Dark Void with the full −20 gating (existing status, Electric/Misty terrain, Insomnia/Vital Spirit/Sweet Veil — Sweet Veil was also missing from the old Yawn-only branch). Tests in tests/test_ai_sleep_truant.py. KNOWN SIMPLIFICATION: the ai.ts 25%-rate sleep-synergy bonus (+1 base, +1 Dream Eater/Nightmare, +1 Hex; ai.ts:1791-1810) is NOT implemented — it needs an aiSeesKill concept the status path lacks; the analogous Toxic 38%-rate bonus was likewise never ported.]**
 
 ### DOC OMISSION: Spiky Shield, Baneful Bunker, Detect, Obstruct
 AI.md says "King's Shield has no unique AI" but doesn't mention Spiky Shield, Baneful Bunker, Detect, or Obstruct. All five are handled identically to Protect in the code.

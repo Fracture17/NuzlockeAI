@@ -298,11 +298,13 @@ ScoreDistC dist_status_special(const BattleState& state, int ai_idx, int32_t mov
         return {{6, 1.0}};
     }
 
-    // Yawn
-    if (move_id == MV_YAWN) {
+    // Sleep moves (Yawn, Hypnosis, Sing, Grass Whistle, Dark Void): identical scoring.
+    if (move_id == MV_YAWN || move_id == MV_HYPNOSIS || move_id == MV_SING
+        || move_id == MV_GRASS_WHISTLE || move_id == MV_DARK_VOID) {
         if (pl_mon.status != STATUS_NONE) return {{-20, 1.0}};
         if (state.terrain == TE_ELECTRIC || state.terrain == TE_MISTY) return {{-20, 1.0}};
-        if (pl_mon.ability == AB_INSOMNIA || pl_mon.ability == AB_VITAL_SPIRIT) return {{-20, 1.0}};
+        if (pl_mon.ability == AB_INSOMNIA || pl_mon.ability == AB_VITAL_SPIRIT
+            || pl_mon.ability == AB_SWEET_VEIL) return {{-20, 1.0}};
         return {{6, 1.0}};
     }
 
