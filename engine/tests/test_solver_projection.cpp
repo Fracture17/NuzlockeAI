@@ -338,38 +338,30 @@ TEST_CASE("solver direct turn matches oracle-mode driver on same input",
     REQUIRE(state_equal(state_a, state_b));
 }
 
-TEST_CASE("solver direct turn errors loudly on missing oracle answer",
+TEST_CASE("solver direct turn surfaces missing oracle answer as pause (not throw)",
           "[solver_turn][fail_loud]") {
-    // Force a Category-A pause: METRONOME_MOVE with no override queued. The plain solver
-    // path must NOT throw NeedsRNG (that's the whole point) — it must surface an error
-    // via SolverTurnResult.ok=false so the search harness knows its RNG enumeration
-    // was wrong.
-    // We reuse a state where side0 has an item and moves that would trigger metronome
-    // resolution. Instead of setting up move data, we manually seed the OracleOverrides
-    // with a mismatched event that IS consumed, then force the code path via a
-    // synthetic call: since we can't cheaply build a Metronome scenario in isolation,
-    // we exercise the API through a state that would need SPEED_TIE resolution — two
-    // mons with identical effective speed and no ordering override.
+    // Force a Category-A pause: SPEED_TIE with no override queued. The solver path
+    // must NOT throw NeedsRNG — it must surface the pause cleanly via SolverTurnResult
+    // so the transition oracle can enumerate branches. Since Task 2, a pause is ok=true
+    // paused=true, not ok=false (that's reserved for genuine runtime errors).
     BattleState state = make_min_state();
     // Identical speeds are already set by make_min_state (stat_spe=60 both sides).
-    // Speed-tie in controlled mode + no override -> NeedsRNG SPEED_TIE.
 
-    // Build real MOVE actions so cpp_build_pending_entries builds two entries that will
-    // tie on speed. move_slot=0 references move_id0 which we set to 33 (arbitrary).
     std::vector<ExecAction> ap0, ap1;
     ExecAction e0; e0.kind = 0; e0.move_slot = 0; e0.source_slot = 0; ap0.push_back(e0);
     ExecAction e1; e1.kind = 0; e1.move_slot = 0; e1.source_slot = 0; ap1.push_back(e1);
 
     DamageLoopLuck lp0{}; DamageLoopLuck lp1{};
     TurnLuck tl0{}; TurnLuck tl1{};
-    // random_mode=false (controlled) so speed tie must be resolved by override or throw.
+    // random_mode=false (controlled) so speed tie must pause, not use native tiebreaker.
     OracleOverrides ov;  // empty — no SPEED_TIE ordering queued.
 
     SolverTurnResult r = cpp_run_one_turn_solver(state, ap0, ap1,
                                                   lp0, lp1, tl0, tl1,
                                                   false, false, ov);
-    REQUIRE(r.ok == false);
-    REQUIRE(!r.error.empty());
+    REQUIRE(r.ok == true);
+    REQUIRE(r.paused == true);
+    REQUIRE(r.event == RngEventC::SPEED_TIE);
 }
 
 // ---------------------------------------------------------------------------

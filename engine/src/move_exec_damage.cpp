@@ -343,22 +343,12 @@ LoopResult handle_damage_loop(BattleState& state, int side_idx, int defender_idx
     bool is_triple_axel = (move == MV_TRIPLE_AXEL);
 
     // Rampage (Thrash/Outrage/Petal Dance): set RAMPAGING + LOCKED_MOVE on first use (before damage).
-    // resolve_rampage_duration: forced → consume RAMPAGE_DURATION int; native: random() < 0.5 → 2 else 3.
-    // rng.py:527 _roll_categorical(RNGEvent.RAMPAGE_DURATION, [2, 3]) records chosen value.
+    // rng.py:527 _roll_categorical(RNGEvent.RAMPAGE_DURATION, [2, 3]); p=0.5 each.
     if (is_rampage(move)) {
         PokemonState& attacker = active_mon(state, side_idx);
         if (!has_timed_ve(attacker, VE_RAMPAGING_ID)) {
-            int32_t duration;
-            if (luck_atk.random_mode) {
-                if (!luck_atk.rng) throw std::runtime_error("random_mode=true but rng=nullptr (misconfiguration)");
-                if (luck_atk.rng->forced)
-                    duration = static_cast<int32_t>(luck_atk.rng->forced->force_int(
-                        luck_atk.rng->current_turn, RngEventC::RAMPAGE_DURATION));
-                else
-                    duration = (luck_atk.rng->random() < 0.5) ? 2 : 3;
-            } else {
-                duration = (luck_atk.rampage_duration_roll >= 0.5) ? 3 : 2;
-            }
+            int32_t duration = rng_resolve_rampage_duration(
+                luck_atk.random_mode, luck_atk.rng, luck_atk.rampage_duration_roll);
             attacker.timed_volatiles.push_back({VE_RAMPAGING_ID, duration});
             attacker.volatiles |= 512 /*Volatile.LOCKED_MOVE*/;
             attacker.locked_slot = phe_eff_slot;

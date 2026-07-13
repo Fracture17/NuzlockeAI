@@ -29,11 +29,15 @@ struct RngParticipants {
 // sets (METRONOME_MOVE, SLEEP_TALK_MOVE, ACTION_SELECT) options_truncated=true and
 // options_count reports how many were dropped. chosen is the resolved outcome
 // (bool -> 0/1, int -> the value); event is the RngEventC integer.
+// p_chosen: probability of the chosen outcome. -1.0 = sentinel (cannot attribute).
+// Every Cat-B site must populate a real probability; -1.0 is only for Cat-A events
+// where the oracle owns the distribution.
 struct AnalyticalRngEntry {
     int32_t turn = 0;
     int32_t event = 0;          // RngEventC value
     RngParticipants who{};
     int32_t chosen = 0;
+    double   p_chosen = -1.0;   // probability of chosen outcome; -1.0 = unattributed
     InlineVec<int32_t, 16> options{};
     uint16_t options_count = 0;  // total option count (may exceed options.size())
     uint8_t  options_truncated = 0;  // 1 when options_count > 16
@@ -65,10 +69,12 @@ inline AnalyticalRngLog* get_analytical_rng_log() { return g_analytical_rng_log(
 // Record one draw. options_span is used to populate options[] up to capacity.
 // Only builds the entry when the sink is non-null; the branch is one comparison
 // when the logger is off. Cheap enough to inline everywhere.
+// p_chosen: probability of the chosen outcome (-1.0 = unattributed/Cat-A).
 inline void analytical_rng_log_draw(int turn, int event_id,
                                     RngParticipants who,
                                     int chosen,
-                                    const int32_t* options, size_t n_options) {
+                                    const int32_t* options, size_t n_options,
+                                    double p_chosen = -1.0) {
     AnalyticalRngLog* sink = g_analytical_rng_log();
     if (!sink) return;
     AnalyticalRngEntry e{};
@@ -76,6 +82,7 @@ inline void analytical_rng_log_draw(int turn, int event_id,
     e.event = event_id;
     e.who = who;
     e.chosen = chosen;
+    e.p_chosen = p_chosen;
     e.options_count = static_cast<uint16_t>(n_options);
     if (n_options <= e.options.capacity()) {
         for (size_t i = 0; i < n_options; ++i) e.options.push_back(options[i]);
@@ -91,9 +98,10 @@ inline void analytical_rng_log_draw(int turn, int event_id,
 inline void analytical_rng_log_draw(int turn, int event_id,
                                     RngParticipants who,
                                     int chosen,
-                                    std::initializer_list<int32_t> options) {
+                                    std::initializer_list<int32_t> options,
+                                    double p_chosen = -1.0) {
     analytical_rng_log_draw(turn, event_id, who, chosen,
-                            options.begin(), options.size());
+                            options.begin(), options.size(), p_chosen);
 }
 
 // Occurrence-keyed Category-B injection channel.

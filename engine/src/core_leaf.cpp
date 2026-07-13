@@ -9,6 +9,7 @@
 #include "effects_internal.h"
 #include "species_weight_lookup.h"
 #include "forced_trace.h"
+#include "rng_resolver.h"   // rng_resolve_psywave_roll_k, rng_resolve_quick_claw
 
 #include <algorithm>
 #include <cmath>
@@ -437,7 +438,10 @@ int32_t cpp_compute_fixed_damage(int32_t move, const PokemonState& attacker,
         return std::max(1, attacker.last_damage_taken * 3 / 2);
     }
     if (move == MOVE_PSYWAVE) {
-        int64_t roll_int = 50 + python_round(cpp_resolve_psywave_roll(luck) * 100);
+        // Use occurrence-keyed resolver: k = python_round(roll*100) in [0,100].
+        // Endpoints k=0,100 have p=1/200; interior have p=1/100.
+        int k = rng_resolve_psywave_roll_k(luck.random_mode, luck.rng, luck.psywave_roll);
+        int64_t roll_int = 50 + static_cast<int64_t>(k);
         return static_cast<int32_t>(std::max<int64_t>(1, roll_int * attacker.level / 100));
     }
     return -1;
@@ -637,17 +641,9 @@ bool is_berry_suppressor(int32_t ability) {
            || ability == ABILITY_AS_ONE_SPECTRIER;
 }
 
-// resolve_quick_claw (src/rng.py:546): random_mode draws rng->random() < 0.2 (20% chance);
-// deterministic fires when quick_claw_threshold <= 20.0.
+// resolve_quick_claw_det: wrapper that threads TurnLuck into the occurrence-keyed resolver.
 bool resolve_quick_claw_det(const TurnLuck& luck) {
-    if (luck.random_mode) {
-        if (!luck.rng) throw std::runtime_error("random_mode=true but rng=nullptr (misconfiguration)");
-        if (luck.rng->forced)
-            // rng.py:546 _roll_bernoulli(RNGEvent.QUICK_CLAW, 20.0)
-            return luck.rng->forced->force_bool(luck.rng->current_turn, RngEventC::QUICK_CLAW);
-        return luck.rng->random() < 0.2;
-    }
-    return luck.quick_claw_threshold <= 20.0;
+    return rng_resolve_quick_claw(luck.random_mode, luck.rng, luck.quick_claw_threshold);
 }
 
 // _triage_priority_bump.

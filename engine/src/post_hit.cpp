@@ -812,19 +812,12 @@ void cpp_apply_post_hit_effects(BattleState& s, const PostHitArgs& a,
         PokemonState& defender = active_mon(s, di);
         if (!defender.fainted && !has_type(defender, TYPE_GHOST) && !has_timed_volatile(defender, VE_BOUND)) {
             // resolve_binding_duration: Grip Claw=7. random_mode forced → consume BINDING_DURATION int;
-            // random_mode native: random() < 0.5 → 4 else 5; deterministic: binding_duration_roll.
-            // rng.py:519 _roll_categorical(RNGEvent.BINDING_DURATION, [4, 5]) records chosen value.
+            // rng.py:519 _roll_categorical(RNGEvent.BINDING_DURATION, [4, 5]); p=0.5 each.
             int32_t duration;
             // Grip Claw item id: 286.
             if (active_mon(s, si).item == 286) duration = 7;
-            else if (luck.random_mode) {
-                if (!luck.rng) throw std::runtime_error("random_mode=true but rng=nullptr (misconfiguration)");
-                if (luck.rng->forced)
-                    duration = static_cast<int32_t>(luck.rng->forced->force_int(
-                        luck.rng->current_turn, RngEventC::BINDING_DURATION));
-                else
-                    duration = (luck.rng->random() < 0.5) ? 4 : 5;
-            } else duration = (luck.binding_duration_roll >= 0.5) ? 5 : 4;
+            else duration = rng_resolve_binding_duration(
+                luck.random_mode, luck.rng, luck.binding_duration_roll);
             int32_t attacker_team_idx = side_at(s, si).active_indices[a.attacker_slot];
             defender.timed_volatiles.push_back({VE_BOUND, duration});
             defender.timed_volatiles.push_back({VE_BOUND_SOURCE_SLOT, a.attacker_slot});

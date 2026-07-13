@@ -88,6 +88,51 @@ pybind11_add_module(nuzlocke_engine_cpp
 )
 target_link_libraries(nuzlocke_engine_cpp PRIVATE nuzlocke_core)
 
+# nuzlocke_solver: solver algorithms (one-way dependency on nuzlocke_core; core must
+# never depend on solver). Same compile flags as core are inherited via add_compile_options
+# at the top of this file.
+add_library(nuzlocke_solver STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/oracle_types.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/state_codec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/question.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/transition_oracle.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/action_space.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/matchup_gen.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/audit_core.cpp
+)
+set_target_properties(nuzlocke_solver PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(nuzlocke_solver PUBLIC nuzlocke_core)
+# Solver headers are under src/solver/; consumers include them as "solver/foo.h".
+target_include_directories(nuzlocke_solver PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+# audit_oracle: standalone completeness + probability audit harness for the transition oracle.
+# EXCLUDE_FROM_ALL: never built by default; build on demand:
+#   cmake --build engine/build --target audit_oracle
+add_executable(audit_oracle EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/audit_oracle.cpp)
+target_link_libraries(audit_oracle PRIVATE nuzlocke_solver nuzlocke_core)
+target_compile_definitions(audit_oracle PRIVATE
+    NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+# solver_trace: single-case debug trace tool for diagnosing oracle failures.
+# EXCLUDE_FROM_ALL: build on demand:
+#   cmake --build engine/build --target solver_trace
+add_executable(solver_trace EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/solver_trace.cpp)
+target_link_libraries(solver_trace PRIVATE nuzlocke_solver nuzlocke_core)
+target_compile_definitions(solver_trace PRIVATE
+    NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+# verify_policy_sampling: one-time tool to verify AI policy sampling == analytic distribution.
+# EXCLUDE_FROM_ALL: not a regular build target.
+add_executable(verify_policy_sampling EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/verify_policy_sampling.cpp)
+target_link_libraries(verify_policy_sampling PRIVATE nuzlocke_solver nuzlocke_core)
+target_compile_definitions(verify_policy_sampling PRIVATE
+    NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
+
 # Native C++ tests via Catch2 v3 (fetched at configure time).
 include(FetchContent)
 FetchContent_Declare(
@@ -102,7 +147,11 @@ include(CTest)
 
 file(GLOB NATIVE_TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp)
 add_executable(nuzlocke_native_tests ${NATIVE_TEST_SOURCES})
-target_link_libraries(nuzlocke_native_tests PRIVATE nuzlocke_core Catch2::Catch2WithMain)
+target_link_libraries(nuzlocke_native_tests PRIVATE nuzlocke_solver nuzlocke_core Catch2::Catch2WithMain)
+# NUZLOCKE_REPO_ROOT: absolute path to repo root, used by matchup_gen tests to locate data files.
+target_compile_definitions(nuzlocke_native_tests PRIVATE
+    NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/.."
+)
 
 add_test(NAME native_tests COMMAND nuzlocke_native_tests)
 
@@ -113,3 +162,12 @@ add_test(NAME native_tests COMMAND nuzlocke_native_tests)
 add_executable(nuzlocke_bench_seam EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/bench/bench_solver_seam.cpp)
 target_link_libraries(nuzlocke_bench_seam PRIVATE nuzlocke_core)
+
+# bench_oracle: per-(state,action) wall-time and leaf-throughput benchmark for the
+# transition oracle. EXCLUDE_FROM_ALL: never built by default; build on demand:
+#   cmake --build engine/build --target bench_oracle
+add_executable(bench_oracle EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/bench/bench_oracle.cpp)
+target_link_libraries(bench_oracle PRIVATE nuzlocke_solver nuzlocke_core)
+target_compile_definitions(bench_oracle PRIVATE
+    NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")

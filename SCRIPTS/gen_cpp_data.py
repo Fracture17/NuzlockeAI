@@ -601,11 +601,52 @@ def _emit_ai_move_sets_h() -> str:
     return "\n".join(lines) + "\n"
 
 
+def _emit_enum_names_h() -> str:
+    """Name→integer-id lookup tables for Species, Move, Ability enums.
+
+    Consumed by engine/src/solver/matchup_gen.cpp to convert JSON string keys
+    (generated_learnsets.json / generated_abilities.json) to engine integer ids.
+    Tables are sorted by name for binary search."""
+    guard = "NUZLOCKE_SOLVER_ENUM_NAMES_H"
+    lines = [
+        "// AUTO-GENERATED — DO NOT EDIT. Re-run SCRIPTS/gen_cpp_data.py to update.",
+        "// Name-to-integer-id lookup tables for Species, Move, and Ability enums.",
+        "// Used by matchup_gen to convert JSON string keys to engine integer IDs.",
+        "#pragma once",
+        f"#ifndef {guard}",
+        f"#define {guard}",
+        "",
+        "#include <cstdint>",
+        "#include <string_view>",
+        "",
+        "struct NameIdEntry { const char* name; int32_t id; };",
+        "",
+    ]
+
+    def emit_table(table_name: str, count_name: str, enum_cls) -> None:
+        entries = sorted((m.name, int(m.value)) for m in enum_cls)
+        lines.append(f"// {len(entries)} entries, sorted by name for binary search.")
+        lines.append(f"static const NameIdEntry {table_name}[{len(entries)}] = {{")
+        for name, val in entries:
+            lines.append(f'    {{ "{name}", {val} }},')
+        lines.append("};")
+        lines.append(f"static const int {count_name} = {len(entries)};")
+        lines.append("")
+
+    emit_table("SPECIES_NAME_TABLE", "SPECIES_NAME_COUNT", Species)
+    emit_table("MOVE_NAME_TABLE", "MOVE_NAME_COUNT", Move)
+    emit_table("ABILITY_NAME_TABLE", "ABILITY_NAME_COUNT", Ability)
+
+    lines.append(f"#endif // {guard}")
+    return "\n".join(lines) + "\n"
+
+
 # ---------------------------------------------------------------------------
 # Public API: generate(out_dir) and CLI
 # ---------------------------------------------------------------------------
 
 _EMITTERS: dict[str, callable] = {
+    "enum_names.h": _emit_enum_names_h,
     "species_data.h": _emit_species_data_h,
     "move_data.h": _emit_move_data_h,
     "item_data.h": _emit_item_data_h,

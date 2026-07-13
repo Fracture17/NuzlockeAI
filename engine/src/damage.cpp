@@ -1431,21 +1431,14 @@ int32_t cpp_calculate_damage(
     }
 
     // Damage roll: integer arithmetic matching Python: damage * (85 + roll_int) // 100.
-    // random_mode forced: int(force_double(DAMAGE_ROLL) * 15.0) — mirrors damage.py:968.
-    // random_mode native: rng->randint(0,15). Deterministic: int(damage_roll * 15).
+    // 16 equiprobable outcomes (roll_int = 0..15); p_chosen = 1/16.
+    // roll_index >= 0 = per-hit override from multi-hit loop (bypasses occurrence-keying).
     int32_t roll_int;
     if (roll_index >= 0) {
         roll_int = roll_index;
-    } else if (atk_luck.random_mode) {
-        if (!atk_luck.rng) throw std::runtime_error("random_mode=true but rng=nullptr (misconfiguration)");
-        if (atk_luck.rng->forced)
-            // rng.py:387 _roll_uniform(RNGEvent.DAMAGE_ROLL); damage.py:968 int(f * 15)
-            roll_int = static_cast<int32_t>(atk_luck.rng->forced->force_double(
-                atk_luck.rng->current_turn, RngEventC::DAMAGE_ROLL) * 15.0);
-        else
-            roll_int = atk_luck.rng->randint(0, 15);
     } else {
-        roll_int = static_cast<int32_t>(atk_luck.damage_roll * 15);  // int(float * 15)
+        roll_int = rng_resolve_damage_roll(atk_luck.random_mode, atk_luck.rng,
+                                           atk_luck.damage_roll);
     }
     damage = damage * (85 + roll_int) / 100;  // integer division (truncation = floor for positive)
 

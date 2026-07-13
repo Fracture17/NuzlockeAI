@@ -2055,3 +2055,87 @@ file = "SCRIPTS/record_cpp_manifest.py"
 confidence = "requirement"
 rationale = "User 2026-07-12: gate = C++ self-regression manifest (full final state + fingerprint); 1M games mixed even=ai/ai odd=random/random, seed 20260712; commit only first 2k (tests/fixtures/cpp_manifest). Random parity traces retired; 28 scenario kept."
 updated = "2026-07-12T15:41:49.495Z"
+
+[[record]]
+name = "question_conjunctive_semantics"
+file = "engine/src/solver/"
+confidence = "requirement"
+rationale = "Question positively asserts ALL required terminal state; unasserted = unconstrained. requireNoFaint only means player not fainted at terminal - NO simultaneous-KO special case (both-faint = WIN when off and requireOppFaint holds). User decision."
+updated = "2026-07-13T06:36:20.425Z"
+
+[[record]]
+name = "oracle_no_zero_prob_branches"
+file = "engine/src/solver/transition_oracle.cpp"
+confidence = "requirement"
+rationale = "Oracle must NOT enumerate zero-probability branches: p=0 AI actions and p=0 branch options are skipped (user instruction). Sound: zero-measure children contribute nothing and can never be sampled; emitted leaf probs still sum to 1."
+updated = "2026-07-13T06:36:27.877Z"
+
+[[record]]
+name = "oracle_dfs_prefix_replay"
+file = "engine/src/solver/transition_oracle.cpp"
+confidence = "settled"
+rationale = "DFS prefix-replay chosen over act-branch over-enumeration: completeness by construction, one turn execution per leaf, zero mechanics duplication. Cat-A prob table is oracle-owned and fail-loud; MC-verified vs random-mode sampling."
+updated = "2026-07-13T06:36:29.956Z"
+
+[[record]]
+name = "solver_turn_luck_overrides"
+file = "engine/src/solver_turn.cpp"
+confidence = "settled"
+rationale = "cpp_run_one_turn_solver MUST set luck_p0/p1.overrides = &overrides (mirrors GameDriver lp*_tmpl_). cpp_run_one_turn threads pre_inject but NOT overrides into luck; without this, sites reached via luck.overrides (Starf check_berry) pause forever."
+updated = "2026-07-13T06:36:48.242Z"
+
+[[record]]
+name = "oracle_depth_guard"
+file = "engine/src/solver/transition_oracle.cpp"
+confidence = "settled"
+rationale = "MAX_PREFIX_DEPTH=128 fail-loud guard: runaway prefix extension (prefix/log misalignment) throws with prefix dump instead of stack-overflow segfault. Quick Draw (ability 259) excluded phase 1 (uninstrumented); preconditions throw on it."
+updated = "2026-07-13T06:36:54.956Z"
+
+[[record]]
+name = "keepitem_item_id_no_earlyfail"
+file = "engine/src/solver/question.cpp"
+confidence = "settled"
+rationale = "keepItem is a positive terminal assertion: player.item must EQUAL the given item id at terminal. Harvest-restored berry counts as kept; Trick/Knock Off swap fails. NOT monotone (Harvest restores, residuals.cpp:373) so no non-terminal early-LOSS."
+updated = "2026-07-13T06:36:56.965Z"
+
+[[record]]
+name = "psywave_truthful_truncation"
+file = "engine/src/rng_resolver.h"
+confidence = "settled"
+rationale = "Psywave logs options_count=101 with options_truncated=1 (true domain k=0..100 exceeds inline capacity 16). Log consumers must NEVER enumerate truncated options; the oracle owns the domain (1/200 endpoints, 1/100 interior)."
+updated = "2026-07-13T06:37:13.940Z"
+
+[[record]]
+name = "pchosen_saturated_occurrence"
+file = "engine/src/logger.h"
+confidence = "settled"
+rationale = "p_chosen (default -1.0) set at each resolution site. Saturated draws (p_chosen==1.0) log but do NOT bump_occurrence: Cat-B injection occurrence index = count of prior NON-saturated draws for that event. Oracle log-scan mirrors this exactly."
+updated = "2026-07-13T06:37:19.997Z"
+
+[[record]]
+name = "matchupgen_conventions"
+file = "engine/src/solver/matchup_gen.cpp"
+confidence = "settled"
+rationale = "Level 50, PP=40 sentinel, teams of one, Quick Draw blocklisted, Uniform always holds a GENERAL_ITEMS item, SashSturdy picks Sash/Band/Sturdy at 1/3 each. Generate-then-filter sharding: RNG stream identical regardless of shard args."
+updated = "2026-07-13T06:37:27.014Z"
+
+[[record]]
+name = "audit_budget_and_stats"
+file = "engine/src/solver/audit/"
+confidence = "settled"
+rationale = "Budget-exceeded (max_leaves, default 1e6) is SKIPPED not failed in both selfcheck and mc (truncated support cannot prove holes). mc: per-child 5-sigma binomial, expected-count floor 5, actions pinned; engine random policy is uniform, NOT the AI dist."
+updated = "2026-07-13T06:37:31.211Z"
+
+[[record]]
+name = "solver_lib_provisionals"
+file = "engine/src/solver/"
+confidence = "provisional"
+rationale = "Separate nuzlocke_solver lib (settled; one-way dep on core). Provisional: PP included in packed context (measure growth); leaf budget 1e6; AdverseFirst ordering best-effort heuristic; no leaf dedup in oracle (aggregation happens in consumers)."
+updated = "2026-07-13T06:37:38.561Z"
+
+[[record]]
+name = "enum_names_emitter"
+file = "SCRIPTS/gen_cpp_data.py"
+confidence = "settled"
+rationale = "engine/generated/enum_names.h (species/move/ability name-to-id tables for matchup_gen) is emitted by _emit_enum_names_h and drift-checked via --check. Never hand-edit; regenerate with gen_cpp_data.py."
+updated = "2026-07-13T06:37:40.203Z"
