@@ -92,6 +92,8 @@ static int run_selfcheck(int argc, char** argv) {
                                           ? report.reason_histogram.at(AuditFailReason::ChildSanity) : 0);
     std::printf("OracleThrewException: %d\n", report.reason_histogram.count(AuditFailReason::OracleThrewException)
                                           ? report.reason_histogram.at(AuditFailReason::OracleThrewException) : 0);
+    std::printf("AggregationMismatch: %d\n", report.reason_histogram.count(AuditFailReason::AggregationMismatch)
+                                          ? report.reason_histogram.at(AuditFailReason::AggregationMismatch) : 0);
 
     // Print each failure for regression capture.
     if (!report.failures.empty()) {

@@ -2067,8 +2067,8 @@ updated = "2026-07-13T06:36:20.425Z"
 name = "oracle_no_zero_prob_branches"
 file = "engine/src/solver/transition_oracle.cpp"
 confidence = "requirement"
-rationale = "Oracle must NOT enumerate zero-probability branches: p=0 AI actions and p=0 branch options are skipped (user instruction). Sound: zero-measure children contribute nothing and can never be sampled; emitted leaf probs still sum to 1."
-updated = "2026-07-13T06:36:27.877Z"
+rationale = "Oracle must NOT enumerate zero-prob branches: p=0 AI actions and p=0 branch options skipped (user instruction). Sound: zero-measure children contribute nothing. Leaf probs sum to 1 in EXACT mode only; NaN under collapse (collapse_probs_nan_poison)."
+updated = "2026-07-14T17:41:53.695Z"
 
 [[record]]
 name = "oracle_dfs_prefix_replay"
@@ -2116,8 +2116,8 @@ updated = "2026-07-13T06:37:19.997Z"
 name = "matchupgen_conventions"
 file = "engine/src/solver/matchup_gen.cpp"
 confidence = "settled"
-rationale = "Level 50, PP=40 sentinel, teams of one, Quick Draw blocklisted, Uniform always holds a GENERAL_ITEMS item, SashSturdy picks Sash/Band/Sturdy at 1/3 each. Generate-then-filter sharding: RNG stream identical regardless of shard args."
-updated = "2026-07-13T06:37:27.014Z"
+rationale = "Level 50, PP=40 sentinel, teams of one, Quick Draw blocklisted. OPPONENT always holds the class item (Uniform: GENERAL_ITEMS; SashSturdy: Sash/Band/Sturdy 1/3); player may be item-free. Generate-then-filter sharding: RNG stream identical all shards."
+updated = "2026-07-14T17:42:38.721Z"
 
 [[record]]
 name = "audit_budget_and_stats"
@@ -2139,3 +2139,52 @@ file = "SCRIPTS/gen_cpp_data.py"
 confidence = "settled"
 rationale = "engine/generated/enum_names.h (species/move/ability name-to-id tables for matchup_gen) is emitted by _emit_enum_names_h and drift-checked via --check. Never hand-edit; regenerate with gen_cpp_data.py."
 updated = "2026-07-13T06:37:40.203Z"
+
+[[record]]
+name = "collapse_probs_nan_poison"
+file = "engine/src/solver/transition_oracle.cpp"
+confidence = "settled"
+rationale = "Pessimal/Coarse collapse: ALL branch/leaf probs are quiet_NaN (collapsed subsets are not distributions; fail-loud on arithmetic misuse). Sigma=1 check skipped iff NaN present. AI-action probs stay REAL (p==0 filter). Exact untouched, locked by test."
+updated = "2026-07-14T17:42:07.916Z"
+
+[[record]]
+name = "bsolver_dedicated_stack_thread"
+file = "engine/src/solver/bsolver.cpp"
+confidence = "settled"
+rationale = "b_win recurses inside oracle emit callbacks (~80-150KB/level), so bsolver_certify runs it on a dedicated pthread with explicit stack (BsolverConfig::stack_size, default 256MB ~ 2000+ levels). Exceptions cross via exception_ptr; all pthread rcs throw."
+updated = "2026-07-14T17:42:13.790Z"
+
+[[record]]
+name = "matchupgen_player_item_free"
+file = "engine/src/solver/matchup_gen.cpp"
+confidence = "requirement"
+rationale = "USER decision: player side (side0) item is NONE with 30% probability in EVERY class (unconditional rng_ draw after all class item logic, keeping the stream aligned); opponent always holds the class item. Mirrors prototype calibration generator."
+updated = "2026-07-14T17:42:20.657Z"
+
+[[record]]
+name = "audit_referee_seam"
+file = "engine/src/solver/audit/"
+confidence = "settled"
+rationale = "AnalyticAuditConfig has injected fixtures + CertifierFn seam (mutually exclusive with repo_root; throws if both). Tests inject wrong verdicts to prove all 5 verification paths incl. loss_vs_exact_win print-first. Keep the pattern for future solvers."
+updated = "2026-07-14T17:42:51.422Z"
+
+[[record]]
+name = "gen_fixtures_self_locating"
+file = "engine/tests/"
+confidence = "settled"
+rationale = "Never pin (seed,index) generator fixtures: generator changes shift the RNG stream and break them. Scan the stream for the first matchup with the needed property (fail loud if absent). Pattern set by the Starf regression in test_solver_audit.cpp."
+updated = "2026-07-14T17:43:12.426Z"
+
+[[record]]
+name = "pessimal_loss_pruner_only"
+file = "engine/src/solver/"
+confidence = "requirement"
+rationale = "USER: pessimal collapse is a LOSS-pruner ONLY. Pessimal LOSS is conclusive; pessimal WIN is NEVER evidence (adversarial subset). Pipelines using pessimal must send non-LOSS outcomes to an exact certifier. Rule survives into the new solver."
+updated = "2026-07-14T17:43:27.661Z"
+
+[[record]]
+name = "solver_transition_2026_07"
+file = "engine/src/solver/"
+confidence = "requirement"
+rationale = "USER 2026-07-14: pivot to a new user-designed solver (bsolver-like, faster; keeps oracle, MatchupGen, audits, pessimal pruning). Analytic likely retired; Phase 2 Task 7 PAUSED at wave-1 (SOLVER_PHASE2_STATE.md). Old-code disposition decided after."
+updated = "2026-07-14T17:43:44.699Z"

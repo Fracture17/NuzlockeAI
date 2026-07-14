@@ -88,6 +88,13 @@ GameDriver::GameDriver(const std::string& args_json) {
                 overrides_.answers[static_cast<int>(RngEventC::ROAR_TARGET)],
                 ov["roar_target"]);
         }
+        // FORCED_SWITCH: the answer is the chosen bench team-slot index (i0).
+        // Used by Emergency Exit / Wimp Out and U-turn oracle mode.
+        if (ov.contains("forced_switch") && !ov["forced_switch"].is_null()) {
+            push_scalar_or_array(
+                overrides_.answers[static_cast<int>(RngEventC::FORCED_SWITCH)],
+                ov["forced_switch"]);
+        }
         // Sub-move selection: the answer is the chosen move id (i0).
         if (ov.contains("metronome_move") && !ov["metronome_move"].is_null()) {
             push_scalar_or_array(
@@ -186,7 +193,8 @@ GameDriver::GameDriver(const std::string& args_json) {
     // Initial faint drain
     {
         auto fq = cpp_build_faint_queue(state_);
-        if (!fq.empty()) cpp_drain_faint_queue(state_, fq, policies_, action_log_);
+        if (!fq.empty()) cpp_drain_faint_queue(state_, fq, policies_, action_log_,
+                                               &overrides_, game_rng_.get());
     }
 }
 
@@ -263,7 +271,8 @@ std::string GameDriver::step(const std::string& answer_json) {
     if (game_rng_) game_rng_->current_turn = turn_count_;
     {
         auto fq = cpp_build_faint_queue(state_);
-        if (!fq.empty()) cpp_drain_faint_queue(state_, fq, policies_, action_log_);
+        if (!fq.empty()) cpp_drain_faint_queue(state_, fq, policies_, action_log_,
+                                               &overrides_, game_rng_.get());
     }
 
     if (cpp_battle_over(state_) || turn_count_ >= max_turns_) {
@@ -405,7 +414,8 @@ std::string GameDriver::_run() {
 
         {
             auto fq = cpp_build_faint_queue(state_);
-            if (!fq.empty()) cpp_drain_faint_queue(state_, fq, policies_, action_log_);
+            if (!fq.empty()) cpp_drain_faint_queue(state_, fq, policies_, action_log_,
+                                                   &overrides_, game_rng_.get());
         }
     }
 

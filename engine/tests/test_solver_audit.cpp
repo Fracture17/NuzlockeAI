@@ -34,6 +34,7 @@ TEST_CASE("audit: selfcheck smoke 10 Uniform matchups", "[audit][selfcheck]") {
     INFO("ordering_mismatch failures: " << report.reason_histogram[AuditFailReason::OrderingMismatch]);
     INFO("child_sanity failures: " << report.reason_histogram[AuditFailReason::ChildSanity]);
     INFO("oracle_threw failures: " << report.reason_histogram[AuditFailReason::OracleThrewException]);
+    INFO("aggregation_mismatch failures: " << report.reason_histogram[AuditFailReason::AggregationMismatch]);
 
     REQUIRE(report.total_failures == 0);
 }
@@ -63,12 +64,16 @@ TEST_CASE("audit: mc smoke 3 Uniform matchups 2000 samples", "[.slow][audit][mc]
 }
 
 // ---------------------------------------------------------------------------
-// Regression: Starf-holder matchup (seed=7 uniform index=35).
-// The player holds a Starf Berry (item 207). Before the fix, cpp_run_one_turn_solver
-// did not thread overrides into the DamageLoopLuck structs, so Starf's check_berry
-// (reached via luck.overrides) always saw nullptr → NeedsRNG → pause, no matter how
-// many answers the DFS supplied → infinite prefix extension → stack-overflow segfault.
+// Regression: player-Starf-holder matchup enumerates.
+// Before the fix, cpp_run_one_turn_solver did not thread overrides into the
+// DamageLoopLuck structs, so Starf's check_berry (reached via luck.overrides)
+// always saw nullptr → NeedsRNG → pause, no matter how many answers the DFS
+// supplied → infinite prefix extension → stack-overflow segfault.
 // Also guards the fail-loud MAX_PREFIX_DEPTH check (throws instead of segfaulting).
+// The fixture is SELF-LOCATING: the original pinned (seed=7 idx=35 action=3), but
+// the player-side 30% item-free generator change shifted the RNG stream; any
+// player-Starf holder exercises the same override-threading path, so we scan for
+// the first one instead of pinning an index (robust to future generator changes).
 // ---------------------------------------------------------------------------
 
 #include "solver/matchup_gen.h"
@@ -78,21 +83,34 @@ TEST_CASE("audit: mc smoke 3 Uniform matchups 2000 samples", "[.slow][audit][mc]
 
 #include <cmath>
 
-TEST_CASE("oracle regression: Starf-holder matchup enumerates (seed=7 idx=35 action=3)",
+TEST_CASE("oracle regression: player-Starf-holder matchup enumerates (self-locating)",
           "[audit][oracle][regression][starf]") {
     MatchupGen::Paths paths{
         repo_root() + "/liveplay/data/generated_learnsets.json",
         repo_root() + "/liveplay/data/generated_abilities.json"};
     MatchupGen gen(7, MatchupGen::Class::Uniform, 0, 1, paths);
+
+    // Scan for the first matchup where the player holds Starf (item 207).
+    // P(player Starf) ≈ 0.7/122 per matchup → expected within a few hundred draws.
     BattleState state{};
-    for (int i = 0; i <= 35; ++i) state = gen.next();
+    bool found = false;
+    for (int i = 0; i < 2000; ++i) {
+        state = gen.next();
+        if (state.side0.team[0].item == 207) { found = true; break; }
+    }
+    REQUIRE(found);  // fail loud if the generator can no longer produce the fixture
 
-    // Sanity: this is the fixture we think it is (player holds Starf = item 207).
-    REQUIRE(state.side0.team[0].item == 207);
-
+    // Use the mon's last non-empty move slot (original repro used slot 3; any
+    // damaging enumeration of a player-Starf holder exercises the override path).
+    const PokemonState& pl = state.side0.team[0];
+    const int32_t move_ids[4] = {pl.move_id0, pl.move_id1, pl.move_id2, pl.move_id3};
+    int slot = 0;
+    for (int m = 3; m >= 0; --m) {
+        if (move_ids[m] != 0) { slot = m; break; }
+    }
     ExecAction action{};
     action.kind = 0;
-    action.move_slot = 3;
+    action.move_slot = slot;
 
     TransitionOracle oracle;
     double total = 0.0;

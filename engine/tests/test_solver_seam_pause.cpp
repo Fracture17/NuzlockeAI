@@ -157,14 +157,5 @@ TEST_CASE("oracle_types compile and hold expected values", "[solver_seam][oracle
     REQUIRE(ss.budget_exceeded == false);
 }
 
-// ---------------------------------------------------------------------------
-// Test 4: Declared-but-throwing stubs throw std::logic_error
-// ---------------------------------------------------------------------------
-
-TEST_CASE("oracle stub damage_table_query throws logic_error", "[solver_seam][stub]") {
-    REQUIRE_THROWS_AS(oracle_damage_table_query(nullptr), std::logic_error);
-}
-
-TEST_CASE("oracle stub hp_threshold_set_query throws logic_error", "[solver_seam][stub]") {
-    REQUIRE_THROWS_AS(oracle_hp_threshold_set_query(nullptr), std::logic_error);
-}
+// Note: stub tests for oracle_damage_table_query / oracle_hp_threshold_set_query were
+// removed in Task 4 — those stubs were replaced by the real engine_queries.h API.

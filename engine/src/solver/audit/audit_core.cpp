@@ -152,17 +152,21 @@ AuditSelfcheckReport audit_selfcheck(const AuditSelfcheckConfig& cfg) {
             std::string throw_msg;
             StepStats nat_stats{}, adv_stats{};
 
-            // Collect Natural and AdverseFirst
+            // Both runs use aggregate_damage_rolls=true (the default).
+            TransitionOracle::Config cfg_on;
+            cfg_on.aggregate_damage_rolls = true;
+
+            // Collect Natural and AdverseFirst (both with aggregation ON)
             try {
                 nat_stats = oracle.step(state, action, [&](ChildOutcome co) -> bool {
                     nat_leaves.push_back(co);
                     return true;
-                }, OrderingHint::Natural);
+                }, OrderingHint::Natural, cfg_on);
 
                 adv_stats = oracle.step(state, action, [&](ChildOutcome co) -> bool {
                     adv_leaves.push_back(co);
                     return true;
-                }, OrderingHint::AdverseFirst);
+                }, OrderingHint::AdverseFirst, cfg_on);
             } catch (const std::exception& e) {
                 threw = true;
                 throw_msg = e.what();
@@ -208,12 +212,66 @@ AuditSelfcheckReport audit_selfcheck(const AuditSelfcheckConfig& cfg) {
                         break;
                     }
                 }
+
+                // AggregationMismatch: run step() with aggregation OFF and compare
+                // PackedKey→Σprob maps. OFF-run budget exceeded → skip (not fail).
+                {
+                    TransitionOracle::Config cfg_off;
+                    cfg_off.aggregate_damage_rolls = false;
+
+                    std::vector<ChildOutcome> off_leaves;
+                    bool agg_skip = false;
+                    try {
+                        StepStats off_stats = oracle.step(state, action,
+                            [&](ChildOutcome co) -> bool {
+                                off_leaves.push_back(co);
+                                return true;
+                            }, OrderingHint::Natural, cfg_off);
+                        if (off_stats.budget_exceeded) {
+                            agg_skip = true;
+                            ++report.skipped_budget;
+                        }
+                    } catch (const std::exception&) {
+                        // OFF run threw (unusual); skip the comparison, not a failure here
+                        agg_skip = true;
+                    }
+
+                    if (!agg_skip) {
+                        // Build PackedKey→Σprob maps for both
+                        std::unordered_map<PackedKey, double> on_map, off_map;
+                        for (const auto& co : nat_leaves)
+                            on_map[state_hash_solver(co.child)] += co.prob;
+                        for (const auto& co : off_leaves)
+                            off_map[state_hash_solver(co.child)] += co.prob;
+
+                        bool maps_match = (on_map.size() == off_map.size());
+                        if (maps_match) {
+                            for (const auto& kv : on_map) {
+                                auto it = off_map.find(kv.first);
+                                if (it == off_map.end()
+                                        || std::abs(it->second - kv.second) > 1e-9) {
+                                    maps_match = false;
+                                    break;
+                                }
+                            }
+                        }
+                        bool leaves_ok = (nat_leaves.size() <= off_leaves.size());
+
+                        if (!maps_match || !leaves_ok) {
+                            reason_mask |= (1 << static_cast<int>(
+                                AuditFailReason::AggregationMismatch));
+                            detail += "agg_mismatch on=" + std::to_string(nat_leaves.size())
+                                    + " off=" + std::to_string(off_leaves.size())
+                                    + " maps_match=" + std::to_string(maps_match) + "; ";
+                        }
+                    }
+                }
             }
 
             if (reason_mask != 0) {
                 ++report.total_failures;
-                // Update histogram
-                for (int bit = 0; bit < 4; ++bit) {
+                // Update histogram (5 possible reason bits now)
+                for (int bit = 0; bit < 5; ++bit) {
                     if (reason_mask & (1 << bit)) {
                         auto reason = static_cast<AuditFailReason>(bit);
                         ++report.reason_histogram[reason];

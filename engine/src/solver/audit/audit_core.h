@@ -12,10 +12,12 @@
 
 // Bitmask reasons for selfcheck failures. Stored as an enum for readable histogram keys.
 enum class AuditFailReason : int {
-    MassError         = 0,  // bit 0: Σp ≠ 1 ± 1e-9
-    OrderingMismatch  = 1,  // bit 1: Natural ≠ AdverseFirst multiset
-    ChildSanity       = 2,  // bit 2: HP out of [0,max] or active-count wrong
-    OracleThrewException = 3, // bit 3: oracle threw an exception
+    MassError            = 0,  // bit 0: Σp ≠ 1 ± 1e-9
+    OrderingMismatch     = 1,  // bit 1: Natural ≠ AdverseFirst multiset
+    ChildSanity          = 2,  // bit 2: HP out of [0,max] or active-count wrong
+    OracleThrewException = 3,  // bit 3: oracle threw an exception
+    AggregationMismatch  = 4,  // bit 4: ON vs OFF PackedKey→prob maps differ by >1e-9
+                               //        or leaves(ON) > leaves(OFF)
 };
 
 // Description of one selfcheck failure (printed for regression fixture capture).

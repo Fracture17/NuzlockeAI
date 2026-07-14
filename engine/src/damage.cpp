@@ -1268,6 +1268,228 @@ static int32_t apply_weather(int32_t damage, int32_t move_type,
 }
 
 // ---------------------------------------------------------------------------
+// Post-roll modifier chain context and helper
+// ---------------------------------------------------------------------------
+
+// All context needed by the post-roll modifier chain.
+// Populated from cpp_calculate_damage's locals before the roll draw.
+struct PostRollCtx {
+    // Mutable copy: Delta Stream can lower effectiveness inside the chain.
+    double      effectiveness;
+    int32_t     move_type;
+    int32_t     move_id;
+    bool        pinch_active;
+    bool        breaks_mold;
+    bool        is_physical;
+    bool        is_crit;
+    bool        magic_room;
+    bool        ai_scoring_view;
+    int32_t     def_side_idx;
+    int32_t     md_tags;        // MoveData::tags bitmask
+    const PokemonState* attacker;
+    const PokemonState* defender;
+    const BattleState*  state;
+};
+
+// Apply roll and full post-roll modifier chain to pre_roll_damage.
+// INVARIANT: nothing in this function reads roll_int except to compute the initial
+// rolled damage (damage * (85 + roll_int) / 100). Every subsequent step depends only
+// on the resulting damage integer. This was verified by inspection of lines 1443–1619
+// of the original code: roll_int is not referenced after line 1443.
+// All modifiers are deterministic functions of the context — no RNG is consumed here.
+static int32_t apply_roll_and_modifiers(int32_t pre_roll_damage, int32_t roll_int,
+                                         PostRollCtx ctx) {
+    // Take a mutable copy of effectiveness (Delta Stream may modify it below).
+    double effectiveness = ctx.effectiveness;
+
+    // Apply roll: integer division matching Python's // operator (truncation for positive).
+    int32_t damage = pre_roll_damage * (85 + roll_int) / 100;
+
+    // STAB (TYPELESS never STABs)
+    if (ctx.move_type != TYPE_TYPELESS) {
+        bool has_stab = has_type(*ctx.attacker, ctx.move_type);
+        if (has_stab) {
+            double stab_mult = (ctx.attacker->ability == AB_ADAPTABILITY) ? 2.0 : 1.5;
+            damage = static_cast<int32_t>(std::floor(damage * stab_mult));
+        }
+    }
+
+    // Pinch abilities: 1.5x after STAB
+    if (ctx.pinch_active)
+        damage = static_cast<int32_t>(std::floor(damage * 1.5));
+
+    // Delta Stream: cap SE vs Flying to 1x
+    if (ctx.state->weather == WEATHER_STRONG_WIND
+            && has_type(*ctx.defender, TYPE_FLYING)
+            && effectiveness > 1.0)
+        effectiveness = 1.0;
+
+    // Type effectiveness
+    damage = static_cast<int32_t>(std::floor(damage * effectiveness));
+
+    // Tinted Lens: 2x for resisted
+    if (ctx.attacker->ability == AB_TINTED_LENS && effectiveness < 1.0)
+        damage *= 2;
+
+    // Neuroforce: 1.25x for SE
+    if (ctx.attacker->ability == AB_NEUROFORCE && effectiveness > 1.0)
+        damage = static_cast<int32_t>(std::floor(damage * 1.25));
+
+    // Filter / Solid Rock / Prism Armor: 0.75x from SE
+    if (effectiveness > 1.0) {
+        if ((ctx.defender->ability == AB_FILTER || ctx.defender->ability == AB_SOLID_ROCK)
+                && !ctx.breaks_mold && !in_set(IGNORE_ABILITY_MOVES, ctx.move_id))
+            damage = static_cast<int32_t>(std::floor(damage * 0.75));
+        else if (ctx.defender->ability == AB_PRISM_ARMOR
+                 && !in_set(IGNORE_ABILITY_MOVES, ctx.move_id))
+            damage = static_cast<int32_t>(std::floor(damage * 0.75));
+    }
+
+    // Aura Break / Dark Aura / Fairy Aura
+    std::vector<int32_t> all_active_abilities;
+    for (int s = 0; s < 2; ++s) {
+        const SideState& side = (s == 0) ? ctx.state->side0 : ctx.state->side1;
+        for (int32_t idx : side.active_indices)
+            all_active_abilities.push_back(side.team[idx].ability);
+    }
+    bool has_dark_aura  = false, has_fairy_aura = false, has_aura_break = false;
+    for (int32_t ab : all_active_abilities) {
+        if (ab == AB_DARK_AURA)  has_dark_aura  = true;
+        if (ab == AB_FAIRY_AURA) has_fairy_aura = true;
+        if (ab == AB_AURA_BREAK) has_aura_break = true;
+    }
+    bool aura_break_active = has_aura_break && !ctx.breaks_mold;
+    static constexpr double AURA_MULT = 4.0 / 3.0;
+    if (ctx.move_type == TYPE_DARK && has_dark_aura)
+        damage = static_cast<int32_t>(std::floor(
+            damage * (aura_break_active ? 0.75 : AURA_MULT)));
+    if (ctx.move_type == TYPE_FAIRY && has_fairy_aura)
+        damage = static_cast<int32_t>(std::floor(
+            damage * (aura_break_active ? 0.75 : AURA_MULT)));
+
+    // Punk Rock (defender): halve incoming sound damage (breakable)
+    if (ctx.defender->ability == AB_PUNK_ROCK
+            && (ctx.md_tags & TAG_SOUND) && !ctx.breaks_mold)
+        damage = static_cast<int32_t>(std::floor(damage * 0.5));
+
+    // Heatproof: halve Fire damage (breakable)
+    if (ctx.defender->ability == AB_HEATPROOF
+            && ctx.move_type == TYPE_FIRE && !ctx.breaks_mold)
+        damage = static_cast<int32_t>(std::floor(damage * 0.5));
+
+    // Water Bubble (defender): halve Fire damage (breakable)
+    if (ctx.defender->ability == AB_WATER_BUBBLE
+            && ctx.move_type == TYPE_FIRE && !ctx.breaks_mold)
+        damage = static_cast<int32_t>(std::floor(damage * 0.5));
+
+    // Dry Skin: 1.25x from Fire (breakable)
+    if (ctx.defender->ability == AB_DRY_SKIN
+            && ctx.move_type == TYPE_FIRE && !ctx.breaks_mold)
+        damage = static_cast<int32_t>(std::floor(damage * 1.25));
+
+    // Life Orb: 1.3x (suppressed by Magic Room)
+    if (ctx.attacker->item == ITEM_LIFE_ORB && !ctx.magic_room)
+        damage = static_cast<int32_t>(std::floor(damage * 1.3));
+
+    // Expert Belt: 1.2x on SE
+    if (ctx.attacker->item == ITEM_EXPERT_BELT && effectiveness > 1.0 && !ctx.magic_room) {
+        static constexpr double EXPERT_BELT_MULT = 4915.0 / 4096.0;
+        damage = static_cast<int32_t>(std::floor(damage * EXPERT_BELT_MULT + 0.5));
+    }
+
+    // Multiscale: halve at full HP (breakable by MB or ignore-ability moves)
+    if (ctx.defender->ability == AB_MULTISCALE && !ctx.breaks_mold
+            && !in_set(IGNORE_ABILITY_MOVES, ctx.move_id)) {
+        int32_t mhp = ctx.defender->has_max_hp ? ctx.defender->max_hp : ctx.defender->stat_hp;
+        int32_t cur = ctx.defender->has_hp    ? ctx.defender->hp    : mhp;
+        if (cur == mhp)
+            damage = static_cast<int32_t>(std::floor(damage * 0.5));
+    }
+
+    // Shadow Shield: halve at full HP
+    if (ctx.defender->ability == AB_SHADOW_SHIELD
+            && !in_set(IGNORE_ABILITY_MOVES, ctx.move_id)) {
+        int32_t mhp = ctx.defender->has_max_hp ? ctx.defender->max_hp : ctx.defender->stat_hp;
+        int32_t cur = ctx.defender->has_hp    ? ctx.defender->hp    : mhp;
+        if (cur == mhp)
+            damage = static_cast<int32_t>(std::floor(damage * 0.5));
+    }
+
+    // Ice Scales: halve special damage (breakable)
+    if (!ctx.is_physical && ctx.defender->ability == AB_ICE_SCALES && !ctx.breaks_mold
+            && !in_set(IGNORE_ABILITY_MOVES, ctx.move_id))
+        damage = static_cast<int32_t>(std::floor(damage * 0.5));
+
+    // Fluffy: halve contact; double Fire
+    if (ctx.defender->ability == AB_FLUFFY && !in_set(IGNORE_ABILITY_MOVES, ctx.move_id)) {
+        if (!ctx.breaks_mold) {
+            bool is_contact = (ctx.md_tags & TAG_CONTACT) != 0;
+            bool contact_suppressed = (ctx.attacker->ability == AB_LONG_REACH
+                                       || ctx.attacker->item == ITEM_PROTECTIVE_PADS);
+            int fluffy_num = 1, fluffy_den = 1;
+            if (is_contact && !contact_suppressed) fluffy_den *= 2;
+            if (ctx.move_type == TYPE_FIRE) fluffy_num *= 2;
+            if (fluffy_num != fluffy_den)
+                damage = static_cast<int32_t>(std::floor(
+                    damage * fluffy_num / static_cast<double>(fluffy_den)));
+        }
+    }
+
+    // Burn: halve physical damage
+    if (ctx.is_physical && ctx.attacker->status == STATUS_BURN
+            && ctx.attacker->ability != AB_GUTS && ctx.move_id != MOVE_FACADE)
+        damage = static_cast<int32_t>(std::floor(damage * 0.5));
+
+    // Screens, Analytic, Friend Guard (require side context)
+    if (ctx.def_side_idx >= 0) {
+        int32_t atk_side_idx = 1 - ctx.def_side_idx;
+        const SideState& def_side = (ctx.def_side_idx == 0)
+                                    ? ctx.state->side0 : ctx.state->side1;
+
+        // Screens and Aurora Veil (bypassed by crits and Infiltrator)
+        if (!ctx.is_crit && ctx.attacker->ability != AB_INFILTRATOR) {
+            bool is_doubles = (ctx.state->format == FORMAT_DOUBLES);
+            static constexpr double SCREEN_DOUBLES = 2732.0 / 4096.0;
+            double screen_mult = is_doubles ? SCREEN_DOUBLES : 0.5;
+
+            if (has_side_condition(def_side, SC_AURORA_VEIL))
+                damage = static_cast<int32_t>(std::floor(damage * screen_mult));
+            else if (ctx.is_physical && has_side_condition(def_side, SC_REFLECT))
+                damage = static_cast<int32_t>(std::floor(damage * screen_mult));
+            else if (!ctx.is_physical && has_side_condition(def_side, SC_LIGHT_SCREEN))
+                damage = static_cast<int32_t>(std::floor(damage * screen_mult));
+        }
+
+        // Analytic: 1.3x when moving last
+        if (ctx.attacker->ability == AB_ANALYTIC) {
+            bool acted_last = false;
+            if (ctx.ai_scoring_view) {
+                acted_last = (ctx.state->prev_turn_order.size() >= 2
+                              && ctx.state->prev_turn_order.back() == atk_side_idx);
+            } else {
+                acted_last = (ctx.state->turn_order.size() >= 2
+                              && ctx.state->turn_order.back() == atk_side_idx);
+            }
+            if (acted_last)
+                damage = static_cast<int32_t>(std::floor(damage * 1.3));
+        }
+
+        // Friend Guard (doubles only)
+        if (!ctx.breaks_mold) {
+            for (int32_t ally_idx : def_side.active_indices) {
+                const PokemonState& ally = def_side.team[ally_idx];
+                if (&ally != ctx.defender && ally.ability == AB_FRIEND_GUARD) {
+                    damage = static_cast<int32_t>(std::floor(damage * 0.75));
+                    break;
+                }
+            }
+        }
+    }
+
+    return std::max(1, damage);
+}
+
+// ---------------------------------------------------------------------------
 // Main calculate_damage
 // ---------------------------------------------------------------------------
 int32_t cpp_calculate_damage(
@@ -1430,6 +1652,23 @@ int32_t cpp_calculate_damage(
             damage = static_cast<int32_t>(std::floor(damage * 1.5));
     }
 
+    // Build context for the post-roll modifier chain (all state beyond the roll draw).
+    PostRollCtx prc;
+    prc.effectiveness  = effectiveness;
+    prc.move_type      = move_type;
+    prc.move_id        = move_id;
+    prc.pinch_active   = pinch_active;
+    prc.breaks_mold    = breaks_mold;
+    prc.is_physical    = is_physical;
+    prc.is_crit        = is_crit;
+    prc.magic_room     = magic_room;
+    prc.ai_scoring_view = ai_scoring_view;
+    prc.def_side_idx   = def_side_idx;
+    prc.md_tags        = md.tags;
+    prc.attacker       = &attacker;
+    prc.defender       = &defender;
+    prc.state          = &state;
+
     // Damage roll: integer arithmetic matching Python: damage * (85 + roll_int) // 100.
     // 16 equiprobable outcomes (roll_int = 0..15); p_chosen = 1/16.
     // roll_index >= 0 = per-hit override from multi-hit loop (bypasses occurrence-keying).
@@ -1439,182 +1678,20 @@ int32_t cpp_calculate_damage(
     } else {
         roll_int = rng_resolve_damage_roll(atk_luck.random_mode, atk_luck.rng,
                                            atk_luck.damage_roll);
-    }
-    damage = damage * (85 + roll_int) / 100;  // integer division (truncation = floor for positive)
-
-    // STAB (TYPELESS never STABs)
-    if (move_type != TYPE_TYPELESS) {
-        bool has_stab = has_type(attacker, move_type);
-        if (has_stab) {
-            double stab_mult = (attacker.ability == AB_ADAPTABILITY) ? 2.0 : 1.5;
-            damage = static_cast<int32_t>(std::floor(damage * stab_mult));
-        }
-    }
-
-    // Pinch abilities: 1.5x after STAB
-    if (pinch_active)
-        damage = static_cast<int32_t>(std::floor(damage * 1.5));
-
-    // Delta Stream: cap SE vs Flying to 1x
-    if (state.weather == WEATHER_STRONG_WIND
-            && has_type(defender, TYPE_FLYING)
-            && effectiveness > 1.0)
-        effectiveness = 1.0;
-
-    // Type effectiveness
-    damage = static_cast<int32_t>(std::floor(damage * effectiveness));
-
-    // Tinted Lens: 2x for resisted
-    if (attacker.ability == AB_TINTED_LENS && effectiveness < 1.0)
-        damage *= 2;
-
-    // Neuroforce: 1.25x for SE
-    if (attacker.ability == AB_NEUROFORCE && effectiveness > 1.0)
-        damage = static_cast<int32_t>(std::floor(damage * 1.25));
-
-    // Filter / Solid Rock / Prism Armor: 0.75x from SE
-    if (effectiveness > 1.0) {
-        if ((defender.ability == AB_FILTER || defender.ability == AB_SOLID_ROCK)
-                && !breaks_mold && !in_set(IGNORE_ABILITY_MOVES, move_id))
-            damage = static_cast<int32_t>(std::floor(damage * 0.75));
-        else if (defender.ability == AB_PRISM_ARMOR && !in_set(IGNORE_ABILITY_MOVES, move_id))
-            damage = static_cast<int32_t>(std::floor(damage * 0.75));
-    }
-
-    // Aura Break / Dark Aura / Fairy Aura: check all active mons
-    std::vector<int32_t> all_active_abilities;
-    for (int s = 0; s < 2; ++s) {
-        const SideState& side = (s == 0) ? state.side0 : state.side1;
-        for (int32_t idx : side.active_indices)
-            all_active_abilities.push_back(side.team[idx].ability);
-    }
-    bool has_dark_aura  = false, has_fairy_aura = false, has_aura_break = false;
-    for (int32_t ab : all_active_abilities) {
-        if (ab == AB_DARK_AURA)  has_dark_aura  = true;
-        if (ab == AB_FAIRY_AURA) has_fairy_aura = true;
-        if (ab == AB_AURA_BREAK) has_aura_break = true;
-    }
-    bool aura_break_active = has_aura_break && !breaks_mold;
-    static constexpr double AURA_MULT = 4.0 / 3.0;
-    if (move_type == TYPE_DARK && has_dark_aura)
-        damage = static_cast<int32_t>(std::floor(damage * (aura_break_active ? 0.75 : AURA_MULT)));
-    if (move_type == TYPE_FAIRY && has_fairy_aura)
-        damage = static_cast<int32_t>(std::floor(damage * (aura_break_active ? 0.75 : AURA_MULT)));
-
-    // Punk Rock (defender): halve incoming sound damage (breakable)
-    if (defender.ability == AB_PUNK_ROCK && (md.tags & TAG_SOUND) && !breaks_mold)
-        damage = static_cast<int32_t>(std::floor(damage * 0.5));
-
-    // Heatproof: halve Fire damage (breakable)
-    if (defender.ability == AB_HEATPROOF && move_type == TYPE_FIRE && !breaks_mold)
-        damage = static_cast<int32_t>(std::floor(damage * 0.5));
-
-    // Water Bubble (defender): halve Fire damage (breakable)
-    if (defender.ability == AB_WATER_BUBBLE && move_type == TYPE_FIRE && !breaks_mold)
-        damage = static_cast<int32_t>(std::floor(damage * 0.5));
-
-    // Dry Skin: 1.25x from Fire (breakable)
-    if (defender.ability == AB_DRY_SKIN && move_type == TYPE_FIRE && !breaks_mold)
-        damage = static_cast<int32_t>(std::floor(damage * 1.25));
-
-    // Life Orb: 1.3x (suppressed by Magic Room)
-    if (attacker.item == ITEM_LIFE_ORB && !magic_room)
-        damage = static_cast<int32_t>(std::floor(damage * 1.3));
-
-    // Expert Belt: 1.2x on SE — pokeRound via chainModify([4915,4096])
-    // Python: math.floor(damage * _EXPERT_BELT_MULT + 0.5) where _EXPERT_BELT_MULT = 4915/4096
-    if (attacker.item == ITEM_EXPERT_BELT && effectiveness > 1.0 && !magic_room) {
-        static constexpr double EXPERT_BELT_MULT = 4915.0 / 4096.0;
-        damage = static_cast<int32_t>(std::floor(damage * EXPERT_BELT_MULT + 0.5));
-    }
-
-    // Multiscale: halve at full HP (breakable by MB or ignore-ability moves)
-    if (defender.ability == AB_MULTISCALE && !breaks_mold
-            && !in_set(IGNORE_ABILITY_MOVES, move_id)) {
-        int32_t mhp = defender.has_max_hp ? defender.max_hp : defender.stat_hp;
-        int32_t cur = defender.has_hp ? defender.hp : mhp;
-        if (cur == mhp)
-            damage = static_cast<int32_t>(std::floor(damage * 0.5));
-    }
-
-    // Shadow Shield: halve at full HP (bypassed by ignore-ability moves only)
-    if (defender.ability == AB_SHADOW_SHIELD && !in_set(IGNORE_ABILITY_MOVES, move_id)) {
-        int32_t mhp = defender.has_max_hp ? defender.max_hp : defender.stat_hp;
-        int32_t cur = defender.has_hp ? defender.hp : mhp;
-        if (cur == mhp)
-            damage = static_cast<int32_t>(std::floor(damage * 0.5));
-    }
-
-    // Ice Scales: halve special damage (breakable)
-    if (!is_physical && defender.ability == AB_ICE_SCALES && !breaks_mold
-            && !in_set(IGNORE_ABILITY_MOVES, move_id))
-        damage = static_cast<int32_t>(std::floor(damage * 0.5));
-
-    // Fluffy: halve contact; double Fire
-    if (defender.ability == AB_FLUFFY && !in_set(IGNORE_ABILITY_MOVES, move_id)) {
-        if (!breaks_mold) {
-            bool is_contact = (md.tags & TAG_CONTACT) != 0;
-            bool contact_suppressed = (attacker.ability == AB_LONG_REACH
-                                       || attacker.item == ITEM_PROTECTIVE_PADS);
-            int fluffy_num = 1, fluffy_den = 1;
-            if (is_contact && !contact_suppressed) fluffy_den *= 2;
-            if (move_type == TYPE_FIRE) fluffy_num *= 2;
-            if (fluffy_num != fluffy_den)
-                damage = static_cast<int32_t>(std::floor(damage * fluffy_num / static_cast<double>(fluffy_den)));
-        }
-    }
-
-    // Burn: halve physical damage (Gen 8: applies on crit; suppressed by Guts; Facade exempt)
-    if (is_physical && attacker.status == STATUS_BURN
-            && attacker.ability != AB_GUTS && move_id != MOVE_FACADE)
-        damage = static_cast<int32_t>(std::floor(damage * 0.5));
-
-    // Screens, Analytic, Friend Guard (require side context)
-    if (def_side_idx >= 0) {
-        int32_t atk_side_idx = 1 - def_side_idx;
-        const SideState& def_side = (def_side_idx == 0) ? state.side0 : state.side1;
-
-        // Screens and Aurora Veil (bypassed by crits and Infiltrator)
-        if (!is_crit && attacker.ability != AB_INFILTRATOR) {
-            bool is_doubles = (state.format == FORMAT_DOUBLES);
-            static constexpr double SCREEN_DOUBLES = 2732.0 / 4096.0;
-            double screen_mult = is_doubles ? SCREEN_DOUBLES : 0.5;
-
-            if (has_side_condition(def_side, SC_AURORA_VEIL))
-                damage = static_cast<int32_t>(std::floor(damage * screen_mult));
-            else if (is_physical && has_side_condition(def_side, SC_REFLECT))
-                damage = static_cast<int32_t>(std::floor(damage * screen_mult));
-            else if (!is_physical && has_side_condition(def_side, SC_LIGHT_SCREEN))
-                damage = static_cast<int32_t>(std::floor(damage * screen_mult));
-        }
-
-        // Analytic: 1.3x when moving last
-        if (attacker.ability == AB_ANALYTIC) {
-            bool acted_last = false;
-            if (ai_scoring_view) {
-                // Use prev_turn_order[-1] == atk_side_idx
-                acted_last = (state.prev_turn_order.size() >= 2
-                              && state.prev_turn_order.back() == atk_side_idx);
-            } else {
-                // Current turn order
-                acted_last = (state.turn_order.size() >= 2
-                              && state.turn_order.back() == atk_side_idx);
-            }
-            if (acted_last)
-                damage = static_cast<int32_t>(std::floor(damage * 1.3));
-        }
-
-        // Friend Guard (doubles only): ally reduces damage by 25% (breakable)
-        if (!breaks_mold) {
-            for (int32_t ally_idx : def_side.active_indices) {
-                const PokemonState& ally = def_side.team[ally_idx];
-                if (&ally != &defender && ally.ability == AB_FRIEND_GUARD) {
-                    damage = static_cast<int32_t>(std::floor(damage * 0.75));
-                    break;
-                }
+        // Annotate the just-logged DAMAGE_ROLL entry with all 16 final damages.
+        // This consumes NO RNG: apply_roll_and_modifiers is purely deterministic.
+        // Only done when the log is active (solver mode) AND it is the main 16-outcome site.
+        AnalyticalRngLog* log_sink = get_analytical_rng_log();
+        if (log_sink && !log_sink->entries.empty()) {
+            const AnalyticalRngEntry& last = log_sink->entries.back();
+            if (last.options_count == 16 && last.options_truncated == 0) {
+                int32_t dmg_by_roll[16];
+                for (int ri = 0; ri < 16; ++ri)
+                    dmg_by_roll[ri] = apply_roll_and_modifiers(damage, ri, prc);
+                annotate_last_damage_roll(*log_sink, dmg_by_roll);
             }
         }
     }
 
-    return std::max(1, damage);
+    return apply_roll_and_modifiers(damage, roll_int, prc);
 }

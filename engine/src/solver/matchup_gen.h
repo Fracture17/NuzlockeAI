@@ -19,10 +19,15 @@
 class MatchupGen {
 public:
     // Generation class: controls item selection constraints.
+    // PLAYER side (side0): item is NONE with 30% probability in EVERY class, else the
+    // class item below. USER decision: the wave-0 analytic only certifies item-free
+    // players, and the prototype's calibration generator gave each side 30% NONE —
+    // without this weighting, analytic audits structurally decide nothing.
+    // OPPONENT side (side1): always the class item (mirrors battle_gen.py opponent logic).
     enum class Class {
-        Uniform,       // any item from GENERAL_ITEMS (always held; mirrors battle_gen.py opponent logic)
-        BerryHolders,  // both sides guaranteed to hold a stress berry (Sitrus/Custap/pinch)
-        SashSturdy,    // both sides hold Focus Sash, Focus Band, or have Sturdy ability
+        Uniform,       // any item from GENERAL_ITEMS
+        BerryHolders,  // stress berry (Sitrus/Custap/pinch)
+        SashSturdy,    // Focus Sash, Focus Band, or Sturdy ability
     };
 
     // Paths to the two JSON data files.
@@ -63,7 +68,8 @@ private:
     // Generate one BattleState without shard filtering (increments global_index_).
     BattleState generate_one();
     // Generate one side's single PokemonState.
-    PokemonState generate_mon(int32_t species_id);
+    // is_player: apply the player-side 30% item-free override (see Class comment).
+    PokemonState generate_mon(int32_t species_id, bool is_player);
     // Sample an item for the given class and species_id.
     int32_t sample_item(int32_t species_id);
 };

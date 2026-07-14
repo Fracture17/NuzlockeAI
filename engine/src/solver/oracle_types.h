@@ -1,5 +1,4 @@
-// Shared type definitions for the transition oracle seam.
-// Header-only except for the two declared-but-throwing stub free functions defined in oracle_types.cpp.
+// Shared type definitions for the transition oracle seam. Header-only.
 #pragma once
 #ifndef NUZLOCKE_SOLVER_ORACLE_TYPES_H
 #define NUZLOCKE_SOLVER_ORACLE_TYPES_H
@@ -70,15 +69,7 @@ struct LeafDebugInfo {
 // Returning false from the normal emit() still aborts; the debug callback does not control flow.
 using LeafDebugFn = std::function<void(const LeafDebugInfo&)>;
 
-// ---------------------------------------------------------------------------
-// Declared-but-throwing stubs for future engine queries (phase 4).
-// Signatures are fixed; bodies throw until the phase-4 implementation lands.
-// ---------------------------------------------------------------------------
-
-// Query the damage table for a given battle state. Phase-4 only.
-void oracle_damage_table_query(const BattleState* state);
-
-// Query the HP-threshold set for a given battle state. Phase-4 only.
-void oracle_hp_threshold_set_query(const BattleState* state);
+// Engine queries (damage tables and HP-threshold sets) have moved to
+// solver/engine_queries.h — the real implementation replacing these stubs.
 
 #endif // NUZLOCKE_SOLVER_ORACLE_TYPES_H

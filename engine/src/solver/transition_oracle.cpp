@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -251,6 +253,8 @@ struct DFSState {
     const LeafDebugFn*         debug_emit;   // nullptr = off (hot-path null check)
     OrderingHint               hint;
     uint64_t                   max_leaves;
+    bool                       aggregate_damage_rolls;
+    TransitionOracle::CollapseMode collapse;
     uint64_t                   leaves        = 0;
     uint64_t                   turn_execs    = 0;
     bool                       aborted       = false;
@@ -270,9 +274,264 @@ struct DFSState {
 // Returns all (value, prob) pairs for a Cat-B log entry.
 // For truncated PSYWAVE_ROLL: oracle owns the domain (k=0..100).
 // For any other truncated entry: throw.
-static std::vector<std::pair<int,double>> expand_catb_options(const AnalyticalRngEntry& entry) {
+// For DAMAGE_ROLL with aggregate=true: group rolls by identical dmg_by_roll value;
+//   one branch per distinct-damage bucket, value = lowest roll in bucket, prob = count/16.
+//   Requires has_dmg_by_roll; throws if annotation is missing (fail loud).
+// For DAMAGE_ROLL with aggregate=false (or CONFUSION_SELF_HIT 15-way): individual rolls.
+// Unknown Cat-B events: throw naming the event id.
+//
+// Collapse semantics (when CollapseMode != None):
+//   - Pessimal: return only the single worst-for-player option (p=1.0) for eligible events.
+//   - Coarse: for DAMAGE_ROLL only, return {min, max} dmg rolls (2 per crit class); all else exact.
+//   - Eligible event table and starvation rule are enforced here (see collapse_rule comments below).
+//
+// Non-static so tests can call it directly for the unknown-event throw test.
+std::vector<std::pair<int,double>> expand_catb_options_for_test(const AnalyticalRngEntry& entry);
+
+// ---------------------------------------------------------------------------
+// Collapse-eligible event table (Lemma (o) re-derivation for this engine).
+//
+// Rule: collapse ONLY randomness that ALWAYS PROGRESSES regardless of outcome.
+// Starvation caveat: if an event can gate whether the PLAYER's action does anything
+// (e.g. player's accuracy miss leaves both sides unchanged → pure self-loop), collapsing
+// to the worst outcome can fabricate an all-self-loop action → false LOSS. Therefore:
+//   - NEVER collapse events that gate whether the player acts (player accuracy, player
+//     full-paralysis, player flinch, player attract, player confusion self-hit, quick claw
+//     on player side) — these can starve the player's action into a self-loop.
+//   - Safely collapse: events that change game state regardless of outcome (damage quantity,
+//     crit multiplier, hit count, opponent-side gating events).
+//
+// Per-event decision (attacker_side=0 → player is attacker; attacker_side=1 → opp is attacker):
+//
+// DAMAGE_ROLL (5): ELIGIBLE. Damage always lands; only magnitude varies. This is the primary
+//   source of tree branching. Worst: max damage when opp attacks (attacker_side=1), min when
+//   player attacks. In Coarse mode: {min, max} dmg values per crit class.
+//
+// CRIT (2): ELIGIBLE. A hit is already guaranteed to land when crit rolls. Crit only changes
+//   multiplier, never gates whether the move executes. Worst: crit (1) when opp attacks
+//   (amplifies opp damage), no-crit (0) when player attacks (reduces player damage).
+//
+// MULTI_HIT_COUNT (7): ELIGIBLE. The first hit always progresses; subsequent hits are bonus.
+//   Worst: max hits (opp attacks more), min hits (player attacks less).
+//
+// ACCURACY (1): NOT ELIGIBLE for player's moves (starvation: miss → no state change →
+//   self-loop → fabricated failure). For opponent accuracy: collapse to always-hit is
+//   subset-sound (opp hit is worse for player and progresses). HOWEVER, distinguishing
+//   who is attacker reliably at this site requires checking attacker_side. We ONLY collapse
+//   accuracy when attacker_side == 1 (opponent is attacker); leave player accuracy intact.
+//
+// SECONDARY_FIRES (3): NOT ELIGIBLE. A secondary effect miss leaves the primary damage
+//   path intact (primary already landed), but it gates an ADDITIONAL effect. Collapsing
+//   "secondary fires" to "always fires" is sound by subset logic — it doesn't cause
+//   starvation. However, "secondary doesn't fire" (worst when player's secondary would
+//   help) and "always fires" (worst when opp's secondary damages player) both progress.
+//   The attacker-side split applies here too. Conservatively: NOT COLLAPSED (sound; slower).
+//   Justification: secondary effects are uncommon and the gain is marginal; staying exact here.
+//
+// PROC_FIRES (4): Same analysis as SECONDARY_FIRES. NOT COLLAPSED (conservative, sound).
+//
+// FLINCH (14): NOT ELIGIBLE for player's moves as defender (player flinches → player can't
+//   act → starvation of player's next action). For opp flinch (player's move causes opp to
+//   flinch): opp flinch is beneficial for player — collapsing to "always flinch" is safe but
+//   the worst-for-player direction is "no flinch". Tracking who the flinch affects (attacker
+//   side + move category) is complex. Conservatively: NOT COLLAPSED (sound).
+//
+// FULL_PARALYSIS (13): NOT ELIGIBLE for player side. If player is fully paralyzed → can't
+//   act → starvation. For opponent full-paralysis (opp can't act = good for player): worst =
+//   no full paralysis. But distinguishing who is affected (attacker vs defender) is event-
+//   contextual. The 'who' field has attacker_side. Full paralysis is a DEFENDER event
+//   (para'd mon can't act). If attacker_side==0 (player is the one who might be para'd,
+//   as defender of the move), NOT eligible. If attacker_side==1 (opp might be para'd),
+//   collapse to not-paralyzed (worst = opp acts). Conservatively: NOT COLLAPSED.
+//
+// ATTRACT_IMMOBILIZE (12): NOT ELIGIBLE for player side. Attract immobilizes the ATTACKER
+//   (the one with the crush). If player is immobilized → no action → starvation. who.attacker_side
+//   identifies who's immobilized. NOT COLLAPSED (conservative: attacker attribution complex).
+//
+// CONFUSION_SELF_HIT (11): NOT ELIGIBLE for player side. If player hits itself → loses HP but
+//   progresses (not a self-loop since HP changes). However confusion snapping (CONFUSION_SNAP)
+//   is the gate for whether confusion persists. Strictly: CONFUSION_SELF_HIT does progress
+//   (player's HP changes) but it replaces the intended action. Complex to reason soundly.
+//   NOT COLLAPSED (conservative).
+//
+// CONFUSION_SNAP (9): Gates whether confusion lifts. Affects player turn routing but doesn't
+//   starve (after snap, player still acts with full move choice). NOT COLLAPSED (conservative).
+//
+// WAKE (8): Gates whether sleep lifts. If player stays asleep → can't act → starvation.
+//   NOT COLLAPSED (player could be asleep; collapsing "always wake" or "always sleep" is
+//   risky without side-specific tracking).
+//
+// DEFROST (10): Gates whether freeze lifts. Same analysis as WAKE. NOT COLLAPSED.
+//
+// QUICK_CLAW (15): Gates whether the mon with Quick Claw moves first. If player has Quick
+//   Claw and it activates → player goes first (potential win path). Collapsing to "never
+//   activates" could starve a player action slot. NOT COLLAPSED.
+//
+// ANCIENT_POWER_BOOST (16): Gates a stat boost after Ancient Power hits. Boosts always
+//   follow a hit (the move hit for primary damage). Collapsing "no boost" is worst when
+//   player uses it, "always boost" is worst when opp uses it. Doesn't gate whether the
+//   primary move fires. WOULD BE ELIGIBLE but rare enough to not bother. NOT COLLAPSED.
+//
+// BINDING_DURATION (17): Duration of binding effects (2 or 3 turns). Progresses regardless.
+//   Worst: more turns (opp binds player longer). ELIGIBLE in principle. NOT COLLAPSED for
+//   simplicity (marginal; binding is rare).
+//
+// RAMPAGE_DURATION (18): Duration of rampage/thrash/petal-dance (2 or 3 turns). Similar to
+//   binding. NOT COLLAPSED for simplicity.
+//
+// SPEED_TIEBREAKER (32): Cat-B speed tie resolution. Determines order but doesn't eliminate
+//   actions. Worst for player = opp goes first. ELIGIBLE in principle. NOT COLLAPSED because
+//   speed ties are already rare in 1v1 and order resolution is complex here.
+//
+// RANDOM_TARGET (33): Random target for multi-target moves (irrelevant in 1v1 singles).
+//   NOT COLLAPSED.
+//
+// Summary: collapsed in Pessimal: DAMAGE_ROLL, CRIT, MULTI_HIT_COUNT, ACCURACY (opp only).
+// Collapsed in Coarse: DAMAGE_ROLL only ({min,max} per crit class).
+// ---------------------------------------------------------------------------
+
+// Returns the collapse rule for an event in Pessimal mode.
+// Returns:
+//   {eligible=true, worst_value=X} if the event should be collapsed to value X.
+//   {eligible=false} if the event should NOT be collapsed.
+// Uses the entry's who field for attacker_side attribution.
+struct CollapseDecision {
+    bool eligible = false;
+    int  worst_value = 0;  // valid iff eligible
+};
+
+static CollapseDecision collapse_rule(const AnalyticalRngEntry& entry) {
     using E = RngEventC;
     auto ev = static_cast<E>(entry.event);
+
+    switch (ev) {
+    case E::DAMAGE_ROLL:
+        // ELIGIBLE. Worst: max damage when opp attacks, min when player attacks.
+        // Must use dmg_by_roll annotation to pick an outcome that actually exists.
+        // If annotation missing, fall through to NOT collapsed (safe, never guesses).
+        if (!entry.has_dmg_by_roll || entry.options_count != 16) return {false, 0};
+        {
+            bool opp_attacks = (entry.who.attacker_side == 1);
+            // Worst for player: if opp attacks, max damage (highest dmg_by_roll roll index).
+            //   If player attacks, min damage (lowest dmg_by_roll roll index).
+            int32_t target_dmg = opp_attacks ? entry.dmg_by_roll[0] : entry.dmg_by_roll[0];
+            int worst_roll = 0;
+            for (int ri = 0; ri < 16; ++ri) {
+                int32_t dmg = entry.dmg_by_roll[ri];
+                if (opp_attacks ? (dmg > target_dmg) : (dmg < target_dmg)) {
+                    target_dmg = dmg;
+                    worst_roll = ri;
+                }
+            }
+            return {true, worst_roll};
+        }
+
+    case E::CRIT:
+        // ELIGIBLE. Worst: crit (1) when opp attacks, no-crit (0) when player attacks.
+        if (entry.options.size() < 2) return {false, 0};
+        {
+            bool opp_attacks = (entry.who.attacker_side == 1);
+            int worst = opp_attacks ? 1 : 0;  // crit=1 hurts player when opp attacks
+            return {true, worst};
+        }
+
+    case E::MULTI_HIT_COUNT:
+        // ELIGIBLE. Worst: max hits when opp attacks (more opp damage),
+        //   min hits when player attacks (less player damage).
+        if (entry.options.size() < 1) return {false, 0};
+        {
+            bool opp_attacks = (entry.who.attacker_side == 1);
+            // Find max/min from options
+            int32_t best = entry.options[0];
+            for (size_t i = 1; i < entry.options.size(); ++i) {
+                if (opp_attacks ? (entry.options[i] > best) : (entry.options[i] < best))
+                    best = entry.options[i];
+            }
+            return {true, static_cast<int>(best)};
+        }
+
+    case E::ACCURACY:
+        // ELIGIBLE only for opponent's moves (attacker_side==1).
+        // Player accuracy: NOT collapsed (starvation guard).
+        if (entry.who.attacker_side != 1) return {false, 0};
+        // Worst for player: opp always hits (value=1 in {0=miss, 1=hit}).
+        return {true, 1};
+
+    default:
+        // All other events: not collapsed. Conservative = always sound.
+        return {false, 0};
+    }
+}
+
+static std::vector<std::pair<int,double>> expand_catb_options(
+        const AnalyticalRngEntry& entry,
+        bool aggregate_damage_rolls,
+        TransitionOracle::CollapseMode collapse) {
+    using E = RngEventC;
+    auto ev = static_cast<E>(entry.event);
+
+    // ---------------------------------------------------------------------------
+    // Pessimal collapse: apply BEFORE any format-specific expansion.
+    // For eligible events, return a single-element list with the worst outcome.
+    // Prob is NaN: collapsed subsets are not probability distributions. The bsolver
+    // only uses these for possibility (p>0), never reads the numeric prob value.
+    // ---------------------------------------------------------------------------
+    if (collapse == TransitionOracle::CollapseMode::Pessimal) {
+        CollapseDecision d = collapse_rule(entry);
+        if (d.eligible) {
+            // Verify the worst value actually exists in the option list (p>0 in exact tree).
+            // For DAMAGE_ROLL: worst_value is a roll index 0..15 — always valid.
+            // For other events: it's a value from the options vector; search for it.
+            bool value_valid = false;
+            if (ev == E::DAMAGE_ROLL) {
+                // Roll index 0..15 is always valid for a 16-outcome DAMAGE_ROLL.
+                value_valid = (entry.options_count == 16 && d.worst_value >= 0 && d.worst_value < 16);
+            } else {
+                for (size_t i = 0; i < entry.options.size(); ++i) {
+                    if (entry.options[i] == d.worst_value) { value_valid = true; break; }
+                }
+            }
+            // If the worst value can't be verified, fall through to exact (safe, never guesses).
+            if (value_valid)
+                return {{d.worst_value, std::numeric_limits<double>::quiet_NaN()}};
+        }
+        // Non-eligible events in Pessimal: fall through to exact expansion.
+    }
+
+    // ---------------------------------------------------------------------------
+    // Coarse collapse: only DAMAGE_ROLL → {min_roll, max_roll} per crit class.
+    // All other events expand exactly.
+    // Probs are NaN: the {min,max} selection is possibility-only, not a distribution.
+    // ---------------------------------------------------------------------------
+    if (collapse == TransitionOracle::CollapseMode::Coarse && ev == E::DAMAGE_ROLL) {
+        int count = static_cast<int>(entry.options_count);
+        if (count == 16) {
+            // Requires dmg_by_roll annotation for min/max selection.
+            // If annotation missing, fall through to normal expansion (safe).
+            if (!entry.has_dmg_by_roll) {
+                // Fall through below; aggregation path will throw if aggregate=ON.
+            } else {
+                // Find roll indices with min and max damage.
+                int min_roll = 0, max_roll = 0;
+                int32_t min_dmg = entry.dmg_by_roll[0], max_dmg = entry.dmg_by_roll[0];
+                for (int ri = 1; ri < 16; ++ri) {
+                    if (entry.dmg_by_roll[ri] < min_dmg) { min_dmg = entry.dmg_by_roll[ri]; min_roll = ri; }
+                    if (entry.dmg_by_roll[ri] > max_dmg) { max_dmg = entry.dmg_by_roll[ri]; max_roll = ri; }
+                }
+                const double nan = std::numeric_limits<double>::quiet_NaN();
+                if (min_roll == max_roll) {
+                    // All rolls identical → single branch. Prob NaN: not a distribution.
+                    return {{min_roll, nan}};
+                }
+                // Two branches: min and max damage rolls. Probs NaN: this is a
+                // possibility-only subset, not a probability distribution. Soundness
+                // of the subset-support theorem requires only that both outcomes exist
+                // in the exact distribution, not that probs are correct.
+                return {{min_roll, nan}, {max_roll, nan}};
+            }
+        }
+        // 15-way confusion roll or annotation missing: fall through to exact.
+    }
 
     if (entry.options_truncated) {
         // Only PSYWAVE_ROLL is permitted to be truncated
@@ -309,11 +568,6 @@ static std::vector<std::pair<int,double>> expand_catb_options(const AnalyticalRn
                    ev == E::ANCIENT_POWER_BOOST || ev == E::WAKE || ev == E::CONFUSION_SNAP ||
                    ev == E::DEFROST || ev == E::CONFUSION_SELF_HIT ||
                    ev == E::ATTRACT_IMMOBILIZE || ev == E::FULL_PARALYSIS)) {
-        // Boolean: chosen either 0 or 1; complement is sibling.
-        // Use p_chosen for the logged chosen value; compute complement.
-        // For robustness we return both options using the re-run approach described in the spec.
-        // Since we know p_chosen from the log, we derive the sibling as 1-p_chosen.
-        // We must identify which option was chosen.
         std::vector<std::pair<int,double>> opts;
         opts.push_back({entry.options[0], entry.options[0] == entry.chosen ?
                         entry.p_chosen : (1.0 - entry.p_chosen)});
@@ -330,10 +584,45 @@ static std::vector<std::pair<int,double>> expand_catb_options(const AnalyticalRn
     }
 
     if (ev == E::DAMAGE_ROLL) {
-        // 16 options [0..15], each p=1/16
-        // options_count may report 16 or 15 (confusion self-hit) from options field
-        // Use options_count to determine which variant
         int count = static_cast<int>(entry.options_count);
+        // CONFUSION_SELF_HIT roll: 15 outcomes — never aggregated (not a multiplicative branch).
+        // Main damage roll: 16 outcomes — aggregated when flag is set and annotation present.
+        if (count == 16 && aggregate_damage_rolls) {
+            // Aggregation path: merge rolls with identical final damage into buckets.
+            // Soundness: the turn state at this draw point is branch-invariant (DFS
+            // prefix replay is deterministic up to here), so equal final damage ⇒
+            // identical subtree from this draw forward. Merging is exact: Σp=1 is
+            // preserved; distinct-damage rolls remain as individual branches.
+            if (!entry.has_dmg_by_roll)
+                throw std::runtime_error(
+                    "TransitionOracle: DAMAGE_ROLL aggregation is ON but "
+                    "has_dmg_by_roll=0 — annotation missing from damage.cpp");
+
+            // Group roll indices by identical dmg_by_roll value.
+            // Use a sorted map keyed by damage value; each entry stores the lowest roll index
+            // and the count (to compute prob = count/16).
+            // Ascending by damage: keeps AdverseFirst ordering semantics (lower = more adverse
+            // for the attacker — best-effort, same as phase-1 Natural ordering).
+            std::map<int32_t, std::pair<int,int>> buckets;  // dmg → (lowest_roll, count)
+            for (int ri = 0; ri < 16; ++ri) {
+                int32_t dmg = entry.dmg_by_roll[ri];
+                auto it = buckets.find(dmg);
+                if (it == buckets.end())
+                    buckets[dmg] = {ri, 1};
+                else
+                    it->second.second += 1;
+            }
+            std::vector<std::pair<int,double>> opts;
+            opts.reserve(buckets.size());
+            for (const auto& kv : buckets) {
+                int  lowest_roll = kv.second.first;
+                int  cnt         = kv.second.second;
+                opts.push_back({lowest_roll, cnt / 16.0});
+            }
+            return opts;
+        }
+
+        // No aggregation (or 15-way confusion roll): individual options, uniform p.
         std::vector<std::pair<int,double>> opts;
         opts.reserve(count);
         for (int i = 0; i < count; ++i)
@@ -360,29 +649,18 @@ static std::vector<std::pair<int,double>> expand_catb_options(const AnalyticalRn
         return {{entry.options[0], 1.0}};
     }
 
-    // For any other Cat-B event with n options: read from p_chosen + complement pattern.
-    // This handles any new events not explicitly covered above.
-    // Use uniform if all have equal probability; otherwise use p_chosen for the chosen option
-    // and distribute the remainder uniformly over other options.
-    // This is the "structure-derived" approach for unknown events.
-    {
-        double uniform_p = 1.0 / static_cast<double>(n);
-        double eps = 1e-12;
-        bool looks_uniform = (std::abs(entry.p_chosen - uniform_p) < eps);
-        std::vector<std::pair<int,double>> opts;
-        if (looks_uniform) {
-            for (size_t i = 0; i < n; ++i)
-                opts.push_back({entry.options[i], uniform_p});
-        } else {
-            // p_chosen for chosen option; divide remainder over others
-            double p_other = (1.0 - entry.p_chosen) / static_cast<double>(n - 1);
-            for (size_t i = 0; i < n; ++i) {
-                double p = (entry.options[i] == entry.chosen) ? entry.p_chosen : p_other;
-                opts.push_back({entry.options[i], p});
-            }
-        }
-        return opts;
-    }
+    // Fail loud: unmodeled Cat-B event. Previously this guessed the distribution
+    // shape — that silently produced wrong probabilities. A throw is always safer:
+    // if any real event hits this path, the audit will catch it immediately.
+    throw std::runtime_error(
+        "TransitionOracle: unmodeled Cat-B event id=" + std::to_string(entry.event)
+        + " — add explicit handling in expand_catb_options");
+}
+
+// Non-static test shim: calls with aggregate=false, collapse=None so tests can probe unknown-event throw.
+std::vector<std::pair<int,double>> expand_catb_options_for_test(const AnalyticalRngEntry& entry) {
+    return expand_catb_options(entry, /*aggregate_damage_rolls=*/false,
+                               TransitionOracle::CollapseMode::None);
 }
 
 // ---------------------------------------------------------------------------
@@ -559,10 +837,16 @@ static void dfs(DFSState& ds,
         ++ds.leaves;
         double leaf_prob = prefix_prob(prefix) * ds.opp_prob;
 
+        // Under any collapse mode, the emitted children no longer form a probability
+        // distribution (siblings were pruned). Force NaN to expose accidental prob reads.
+        // Exact mode (None) keeps real probabilities for the psolver contract.
+        if (ds.collapse != TransitionOracle::CollapseMode::None)
+            leaf_prob = std::numeric_limits<double>::quiet_NaN();
+
         // Debug callback (null-guarded; zero cost on hot path).
         if (ds.debug_emit && *ds.debug_emit) {
             LeafDebugInfo dbg;
-            dbg.cumulative_prob = leaf_prob;
+            dbg.cumulative_prob = leaf_prob;  // NaN in collapse modes by design
             dbg.path.reserve(prefix.size());
             for (const auto& pe : prefix) {
                 LeafPathEntry lpe;
@@ -603,14 +887,24 @@ static void dfs(DFSState& ds,
         if (std::abs(e.p_chosen - 1.0) > 1e-12) ++occ_of_branch;
     }
 
-    // Expand options for this branch
-    std::vector<std::pair<int,double>> branch_opts = expand_catb_options(branch_entry);
+    // Expand options for this branch (collapse mode applied here).
+    std::vector<std::pair<int,double>> branch_opts = expand_catb_options(branch_entry,
+                                                                           ds.aggregate_damage_rolls,
+                                                                           ds.collapse);
 
-    // Sanity: branch option probabilities must sum to 1±1e-9
+    // Sanity: branch option probabilities must sum to 1±1e-9.
+    // Skip when any prob is NaN: collapsed subsets are not distributions (NaN is
+    // intentional under Pessimal/Coarse for collapsed branches). For non-collapsed
+    // events that fall through to exact expansion (even under collapse modes), the
+    // probs are still real and the check remains active — a valid internal invariant.
     {
+        bool has_nan = false;
         double s = 0.0;
-        for (const auto& kv : branch_opts) s += kv.second;
-        if (std::abs(s - 1.0) > 1e-9)
+        for (const auto& kv : branch_opts) {
+            if (std::isnan(kv.second)) { has_nan = true; break; }
+            s += kv.second;
+        }
+        if (!has_nan && std::abs(s - 1.0) > 1e-9)
             throw std::runtime_error(
                 "TransitionOracle: Cat-B branch probs don't sum to 1 for event "
                 + std::to_string(branch_event) + " (sum=" + std::to_string(s) + ")");
@@ -618,6 +912,7 @@ static void dfs(DFSState& ds,
 
     // AdverseFirst ordering: sort options to put player-adverse outcomes first.
     // This is a best-effort heuristic; must not change the multiset.
+    // All comparators sort by VALUE (a.first / b.first), never by prob — safe under NaN.
     // For a damage-roll: lower player roll first (if player is attacker) or higher if opponent.
     // We approximate: for DAMAGE_ROLL, sort ascending (lower damage first = more adverse for player).
     // For ACCURACY/CRIT: put miss/no-crit first (adverse for player attacker).
@@ -650,7 +945,9 @@ static void dfs(DFSState& ds,
     }
 
     for (const auto& opt : branch_opts) {
-        // Skip zero-probability branch values (defensive; contributes nothing).
+        // Skip zero-probability branches (they contribute nothing and cannot be sampled).
+        // NaN != 0.0 (IEEE 754), so collapsed branches with NaN prob are NOT skipped here
+        // — they are kept as possibility branches for the bsolver.
         if (opt.second == 0.0) continue;
         PrefixEntry pe;
         pe.channel = Channel::CatB;
@@ -715,6 +1012,8 @@ StepStats TransitionOracle::step(const BattleState& state,
         DFSState ds{
             state, player_action, ap.action, ap.prob,
             emit, dbg, hint, cfg.max_leaves,
+            cfg.aggregate_damage_rolls,
+            cfg.collapse,
             0, 0, false, false,
             CategoryBOccurrenceCounters{},
             AnalyticalRngLog{},

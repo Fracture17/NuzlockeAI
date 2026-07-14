@@ -18,9 +18,17 @@
 #include <unordered_map>
 #include <vector>
 
-// Forward-declare cpp_apply_switch to avoid circular include (orchestrate.h includes turn.h).
+// Forward-declare orchestrate functions to avoid circular include (orchestrate.h includes turn.h).
 void cpp_apply_switch(BattleState& state, int side_idx, int new_slot, int source_slot = 0,
                       ExecCtx* ctx = nullptr);
+int cpp_entry_ee_step(BattleState& state, int si, int active_team_idx,
+                      int32_t hp_before_hazards,
+                      Policy* policies[2],
+                      std::vector<std::vector<int32_t>>& exp_participants,
+                      const OracleOverrides* overrides,
+                      NativeRng* rng, ExecCtx* ctx,
+                      nlohmann::json* action_log,
+                      int32_t* next_hp_before_out);
 
 using eff_internal::active_mon;
 using eff_internal::side_at;
@@ -162,11 +170,53 @@ static std::vector<ExecAction> bench_switch_candidates(BattleState& state, int s
     return acts;
 }
 
+// Select and apply one FORCED_PIVOT switch for side `si`.
+// Handles oracle mode (oracle_resolve → NeedsRNG on no override), forced-trace mode
+// (policy select_switch consumes from trace), and plain mode (policy random draw).
+// Mirrors the ROAR_TARGET oracle pattern for FORCED_SWITCH.
+// Clears exp_participants[0] for side-1 switches (mirrors effects.py:519-522).
+// hp_before_out: when non-null, receives the incoming mon's HP BEFORE hazards apply.
+// Returns the chosen team index, or -1 if candidates is empty (no switch applied).
+int cpp_resolve_one_forced_pivot(BattleState& state, int si,
+                                  Policy* policies[2],
+                                  std::vector<std::vector<int32_t>>& exp_participants,
+                                  const OracleOverrides* overrides,
+                                  NativeRng* rng,
+                                  ExecCtx* ctx,
+                                  int32_t* hp_before_out) {
+    auto candidates = bench_switch_candidates(state, si);
+    if (candidates.empty()) return -1;
+
+    int team_idx;
+    if (rng && rng->forced) {
+        // Forced-trace mode: consume the FORCED_SWITCH answer from the trace via policy.
+        team_idx = policies[si]->select_switch(candidates, state, si, SwitchCtx::FORCED_PIVOT).switch_to_slot;
+    } else if (overrides) {
+        // Oracle mode: oracle_resolve honors an injected override or throws NeedsRNG to pause.
+        std::vector<int> options;
+        for (const ExecAction& c : candidates) options.push_back(c.switch_to_slot);
+        std::sort(options.begin(), options.end());
+        RngParticipants who{(int8_t)si, (int8_t)side_at(state, si).active_indices[0], -1, -1};
+        team_idx = oracle_resolve(overrides, RngEventC::FORCED_SWITCH, options,
+                                   who, state.turn_number);
+    } else {
+        // Plain mode: policy draws randomly (or scripted/AI in non-oracle game runner).
+        team_idx = policies[si]->select_switch(candidates, state, si, SwitchCtx::FORCED_PIVOT).switch_to_slot;
+    }
+
+    if (hp_before_out)
+        *hp_before_out = side_at(state, si).team[team_idx].hp;
+    if (si == 1 && !exp_participants.empty())
+        exp_participants[0].clear();
+    cpp_apply_switch(state, si, team_idx, 0, ctx);
+    return team_idx;
+}
+
 // Resolve a non-empty pending list after cpp_execute_action. Mirrors Python's
 // _handle_pending_switches (simulator.py:1159): partition into roar vs player switches.
 // Roar/phazing causes ("roar") are handled first via RNG oracle draw (phaze target).
-// Player-selected causes (u_turn, eject_button, red_card; eject_pack is relabeled
-// "eject_button" by the drain above) are resolved via Policy.
+// Player-selected causes (u_turn, eject_button, red_card, emergency_exit; eject_pack is
+// relabeled "eject_button" by the drain above) are resolved via Policy (or oracle_resolve).
 // Other causes throw "unported: pending_switch" to fail loudly.
 // When policies/action_log are null, any pending switch throws.
 // ctx: threaded to cpp_apply_switch for entry effects (Intimidate etc.) on the incoming mon.
@@ -188,7 +238,8 @@ void cpp_resolve_pending_switches(BattleState& state,
     // Validate: only known causes are allowed.
     for (const PendingSwitch& ps : pending) {
         if (ps.reason != "roar" && ps.reason != "u_turn"
-                && ps.reason != "eject_button" && ps.reason != "red_card")
+                && ps.reason != "eject_button" && ps.reason != "red_card"
+                && ps.reason != "emergency_exit")
             throw std::runtime_error("unported: pending_switch");
     }
 
@@ -264,6 +315,8 @@ void cpp_resolve_pending_switches(BattleState& state,
 
         if (phaze_side == 1 && !exp_participants.empty())
             exp_participants[0].clear();
+        // Capture HP before entry hazards apply inside cpp_apply_switch.
+        int32_t phaze_hp_before = side_at(state, phaze_side).team[team_idx].hp;
         cpp_apply_switch(state, phaze_side, team_idx, 0, ctx);
 
         nlohmann::json phaze_entry;
@@ -271,6 +324,15 @@ void cpp_resolve_pending_switches(BattleState& state,
         phaze_entry["side"] = phaze_side;
         phaze_entry["target"] = team_idx;
         action_log->push_back(std::move(phaze_entry));
+
+        // EE/Wimp Out entry-hazard loop: re-prompt if the phaze-in mon crosses 50% on entry.
+        int32_t next_hp_before = 0;
+        while (cpp_entry_ee_step(state, phaze_side, team_idx, phaze_hp_before,
+                                  policies, exp_participants, overrides, rng, ctx,
+                                  action_log, &next_hp_before) >= 0) {
+            team_idx     = side_at(state, phaze_side).active_indices[0];
+            phaze_hp_before = next_hp_before;
+        }
         break;  // singles: at most one roar entry
     }
 
@@ -290,15 +352,17 @@ void cpp_resolve_pending_switches(BattleState& state,
 
     for (int si = 0; si < 2; ++si) {
         if (!needs_switch[si]) continue;
-        auto candidates = bench_switch_candidates(state, si);
-        // Mirrors Python: if no live bench, no switch is applied.
-        if (candidates.empty()) continue;
-        ExecAction chosen = policies[si]->select_switch(candidates, state, si, SwitchCtx::FORCED_PIVOT);
-        int team_idx = chosen.switch_to_slot;
-        // Clear exp_participants for side-1 switches (mirrors effects.py:519-522).
-        if (si == 1 && !exp_participants.empty())
-            exp_participants[0].clear();
-        cpp_apply_switch(state, si, team_idx, 0, ctx);
+        int32_t hp_before = 0;
+        int team_idx = cpp_resolve_one_forced_pivot(state, si, policies, exp_participants,
+                                                 overrides, rng, ctx, &hp_before);
+        if (team_idx < 0) continue;  // no live bench
+        // EE/Wimp Out entry-hazard loop: re-prompt if the switched-in mon crosses 50% on entry.
+        int32_t next_hp_before = 0;
+        while (cpp_entry_ee_step(state, si, team_idx, hp_before, policies, exp_participants,
+                                  overrides, rng, ctx, action_log, &next_hp_before) >= 0) {
+            team_idx  = side_at(state, si).active_indices[0];
+            hp_before = next_hp_before;
+        }
         if (si == 0) p0_choice = team_idx;
         else         p1_choice = team_idx;
     }
@@ -796,6 +860,39 @@ void cpp_run_one_turn(BattleState& state,
         rsnap.lp1               = luck_p1;
         try {
             cpp_apply_residuals(state, rluck, rctx, residual_switches);
+            // Site 2 (oracle branch): resolve EE/Wimp Out switches queued by residuals.
+            // rsnap is the pre-residual snapshot; if oracle_resolve throws NeedsRNG here,
+            // the catch below restores pre-residual state and throws TurnPause so the
+            // driver pauses. On resume, residuals re-run deterministically from rsnap,
+            // rebuilding the identical residual_switches, then resolve with the override set.
+            if (!residual_switches.empty()) {
+                for (const PendingSwitch& ps : residual_switches) {
+                    int32_t hp_before = 0;
+                    int team_idx = cpp_resolve_one_forced_pivot(state, ps.side_idx, policies,
+                                                     exp_participants, overrides, rctx.rng, &ctx,
+                                                     &hp_before);
+                    if (team_idx >= 0) {
+                        // EE/Wimp Out entry-hazard loop for residual switches.
+                        int32_t next_hp_before = 0;
+                        while (cpp_entry_ee_step(state, ps.side_idx, team_idx, hp_before,
+                                                  policies, exp_participants, overrides,
+                                                  rctx.rng, &ctx, action_log, &next_hp_before) >= 0) {
+                            team_idx  = side_at(state, ps.side_idx).active_indices[0];
+                            hp_before = next_hp_before;
+                        }
+                    }
+                }
+                nlohmann::json entry;
+                entry["phase"] = "forced_switch";
+                entry["p0"] = nullptr;
+                entry["p1"] = nullptr;
+                for (const PendingSwitch& ps : residual_switches) {
+                    if (ps.side_idx == 0) entry["p0"] = side_at(state, 0).active_indices[0];
+                    if (ps.side_idx == 1) entry["p1"] = side_at(state, 1).active_indices[0];
+                }
+                if (action_log) action_log->push_back(std::move(entry));
+                residual_switches.clear();
+            }
         } catch (NeedsRNG& nr) {
             state            = rsnap.state;
             ctx              = rsnap.ctx;
@@ -835,13 +932,39 @@ void cpp_run_one_turn(BattleState& state,
     cpp_apply_eot_volatile_clear(state);
     cpp_apply_eot_weather_terrain(state);
 
-    // ACCEPTED unported boundary (NOT a Category-A oracle gap). Residual-triggered forced
-    // switches (Emergency Exit / Wimp Out) are deliberately left unported: Python's _finish_turn
-    // re-runs on resume and double-applies every residual for the turn (a known bug we are
-    // intentionally freezing, not replicating). EMERGENCY_EXIT/WIMP_OUT are pruned from all
-    // parity corpora. See RECORDS/INTENTIONAL_DIVERGENCES.md #2.
-    if (!residual_switches.empty())
-        throw std::runtime_error("unported: residual_switch");
+    // Site 2 (plain branch): resolve EE/Wimp Out switches queued by residuals.
+    // In plain mode NeedsRNG from oracle_resolve propagates out unchanged (no override context).
+    if (!residual_switches.empty()) {
+        if (!policies) throw std::runtime_error("EE residual switch requires policies");
+        for (const PendingSwitch& ps : residual_switches) {
+            int32_t hp_before = 0;
+            int team_idx = cpp_resolve_one_forced_pivot(state, ps.side_idx, policies,
+                                                 exp_participants, overrides, rctx.rng, &ctx,
+                                                 &hp_before);
+            if (team_idx >= 0) {
+                // EE/Wimp Out entry-hazard loop for residual switches.
+                int32_t next_hp_before = 0;
+                while (cpp_entry_ee_step(state, ps.side_idx, team_idx, hp_before,
+                                          policies, exp_participants, overrides,
+                                          rctx.rng, &ctx, action_log, &next_hp_before) >= 0) {
+                    team_idx  = side_at(state, ps.side_idx).active_indices[0];
+                    hp_before = next_hp_before;
+                }
+            }
+        }
+        if (action_log) {
+            nlohmann::json entry;
+            entry["phase"] = "forced_switch";
+            entry["p0"] = nullptr;
+            entry["p1"] = nullptr;
+            for (const PendingSwitch& ps : residual_switches) {
+                if (ps.side_idx == 0) entry["p0"] = side_at(state, 0).active_indices[0];
+                if (ps.side_idx == 1) entry["p1"] = side_at(state, 1).active_indices[0];
+            }
+            action_log->push_back(std::move(entry));
+        }
+        residual_switches.clear();
+    }
 
 
     // === _check_fainted ===

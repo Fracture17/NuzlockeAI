@@ -468,6 +468,77 @@ static std::vector<ExecAction> bench_switch_actions(const BattleState& state, in
     return acts;
 }
 
+// EE/Wimp Out ability constants for entry-hazard crossing check.
+static constexpr int32_t EE_ABILITY_EE   = 194;  // EMERGENCY_EXIT
+static constexpr int32_t EE_ABILITY_WO   = 193;  // WIMP_OUT
+
+// After a mon is switched in, check if it crossed 50% HP via entry hazards (Site 3).
+// hp_before_hazards: HP of the incoming mon captured BEFORE cpp_apply_switch was called.
+// The crossing check is strict: hp_before > half AND hp_after <= half AND alive AND bench exists.
+// When the crossing holds, resolves one FORCED_PIVOT and writes the result into *next_hp_before
+// (pre-hazard HP of the newly-active mon) so the caller can loop.
+// Returns the new team_idx of the replacement (>=0) or -1 if no crossing / no bench.
+// NeedsRNG propagates out in plain mode; oracle mode throws NeedsRNG via oracle_resolve.
+int cpp_entry_ee_step(BattleState& state, int si, int active_team_idx,
+                              int32_t hp_before_hazards,
+                              Policy* policies[2],
+                              std::vector<std::vector<int32_t>>& exp_participants,
+                              const OracleOverrides* overrides,
+                              NativeRng* rng, ExecCtx* ctx,
+                              nlohmann::json* action_log,
+                              int32_t* next_hp_before_out) {
+    const SideState& side = side_at(state, si);
+    int ai = side.active_indices[0];
+    const PokemonState& mon = side.team[ai];
+    if (mon.ability != EE_ABILITY_EE && mon.ability != EE_ABILITY_WO) return -1;
+    if (mon.fainted || mon.hp <= 0) return -1;
+    int32_t half = mon.max_hp / 2;
+    if (!(hp_before_hazards > half && half >= mon.hp)) return -1;
+    // Live bench check.
+    bool bench = false;
+    for (int i = 0; i < (int)side.team.size(); ++i) {
+        bool is_active = false;
+        for (int32_t a : side.active_indices) if (a == i) { is_active = true; break; }
+        if (!is_active && !side.team[i].fainted) { bench = true; break; }
+    }
+    if (!bench) return -1;
+    // Get the bench candidates and capture the replacement's pre-hazard HP before switching.
+    auto candidates = bench_switch_actions(state, si, 0);
+    if (candidates.empty()) return -1;
+    // Determine which mon will be switched in (need HP before hazards).
+    // We must select the mon first, then capture its HP, then call cpp_apply_switch.
+    // oracle_resolve may throw NeedsRNG here (oracle mode) — that's correct behavior.
+    int new_team_idx;
+    if (rng && rng->forced) {
+        new_team_idx = policies[si]->select_switch(candidates, state, si,
+                                                    SwitchCtx::FORCED_PIVOT).switch_to_slot;
+    } else if (overrides) {
+        std::vector<int> options;
+        for (const ExecAction& c : candidates) options.push_back(c.switch_to_slot);
+        std::sort(options.begin(), options.end());
+        RngParticipants who{(int8_t)si, (int8_t)ai, -1, -1};
+        new_team_idx = oracle_resolve(overrides, RngEventC::FORCED_SWITCH, options,
+                                      who, state.turn_number);
+    } else {
+        new_team_idx = policies[si]->select_switch(candidates, state, si,
+                                                    SwitchCtx::FORCED_PIVOT).switch_to_slot;
+    }
+    // Capture pre-hazard HP of the incoming replacement BEFORE the switch applies hazards.
+    if (next_hp_before_out)
+        *next_hp_before_out = side_at(state, si).team[new_team_idx].hp;
+    // Apply exp clear for side-1 (mirrors effects.py:519-522).
+    if (si == 1 && !exp_participants.empty()) exp_participants[0].clear();
+    cpp_apply_switch(state, si, new_team_idx, 0, ctx);
+    if (action_log) {
+        nlohmann::json entry;
+        entry["phase"] = "forced_switch";
+        entry["p0"] = (si == 0) ? nlohmann::json(new_team_idx) : nlohmann::json(nullptr);
+        entry["p1"] = (si == 1) ? nlohmann::json(new_team_idx) : nlohmann::json(nullptr);
+        action_log->push_back(std::move(entry));
+    }
+    return new_team_idx;
+}
+
 // Drain the faint queue via policies; appends post_faint entries to action_log.
 // After the queue empties, REBUILDS it (cpp_build_faint_queue) and keeps draining:
 // a replacement that dies to entry hazards during the drain is re-prompted, matching
@@ -478,7 +549,12 @@ static std::vector<ExecAction> bench_switch_actions(const BattleState& state, in
 void cpp_drain_faint_queue(BattleState& state,
                             std::vector<std::pair<int,int>>& faint_queue,
                             Policy* policies[2],
-                            nlohmann::json& action_log) {
+                            nlohmann::json& action_log,
+                            const OracleOverrides* overrides,
+                            NativeRng* rng) {
+    // exp_participants placeholder (not tracked in post-faint drain path).
+    std::vector<std::vector<int32_t>> exp_dummy;
+
     while (!faint_queue.empty()) {
         auto round = current_faint_round(faint_queue);
 
@@ -496,9 +572,18 @@ void cpp_drain_faint_queue(BattleState& state,
             }
             ExecAction chosen = policies[si]->select_switch(candidates, state, si, SwitchCtx::POST_FAINT);
             int team_idx = chosen.switch_to_slot;
+            // Capture HP before entry hazards apply (inside cpp_apply_switch).
+            int32_t hp_before = side_at(state, si).team[team_idx].hp;
             cpp_apply_switch(state, si, team_idx, slot_pos);
-            if (si == 0) p0_choice = team_idx;
-            else         p1_choice = team_idx;
+            // EE/Wimp Out entry-hazard loop: re-prompt if each new active crosses 50% on entry.
+            int32_t next_hp_before = 0;
+            while (cpp_entry_ee_step(state, si, team_idx, hp_before, policies, exp_dummy,
+                                      overrides, rng, nullptr, &action_log, &next_hp_before) >= 0) {
+                team_idx   = side_at(state, si).active_indices[0];
+                hp_before  = next_hp_before;
+            }
+            if (si == 0) p0_choice = side_at(state, si).active_indices[slot_pos];
+            else         p1_choice = side_at(state, si).active_indices[slot_pos];
         }
 
         nlohmann::json entry;

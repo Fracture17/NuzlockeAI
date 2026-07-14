@@ -72,13 +72,29 @@ ExecAction cpp_action_from_json(const nlohmann::json& aj);
 // Mirrors Python _check_fainted (simulator.py:815).
 std::vector<std::pair<int,int>> cpp_build_faint_queue(const BattleState& state);
 
+// Check and apply one Emergency Exit / Wimp Out switch on entry to hazards.
+// Returns the new team_idx of the replacement (>=0) or -1 if no crossing / no bench.
+// Captures *next_hp_before_out = incoming replacement's HP before their hazards (if non-null).
+// NeedsRNG propagates out in plain mode; oracle mode throws NeedsRNG via oracle_resolve.
+int cpp_entry_ee_step(BattleState& state, int si, int active_team_idx,
+                      int32_t hp_before_hazards,
+                      Policy* policies[2],
+                      std::vector<std::vector<int32_t>>& exp_participants,
+                      const OracleOverrides* overrides,
+                      NativeRng* rng, ExecCtx* ctx,
+                      nlohmann::json* action_log,
+                      int32_t* next_hp_before_out);
+
 // Drain the faint queue via policies; appends post_faint entries to action_log.
 // Rebuilds the queue after each pass until no fainted active with live bench remains
 // (re-prompts replacements killed by entry hazards; record faint_queue_no_rebuild_bug).
+// overrides/rng: optional oracle context for EE entry-hazard chain resolution.
 void cpp_drain_faint_queue(BattleState& state,
                             std::vector<std::pair<int,int>>& faint_queue,
                             Policy* policies[2],
-                            nlohmann::json& action_log);
+                            nlohmann::json& action_log,
+                            const OracleOverrides* overrides = nullptr,
+                            NativeRng* rng = nullptr);
 
 // Construct a Policy by kind ("random" or "ai"). Throws loudly on unknown kind.
 std::unique_ptr<Policy> cpp_make_policy(const std::string& kind, uint64_t seed);

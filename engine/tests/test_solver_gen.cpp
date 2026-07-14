@@ -178,10 +178,13 @@ TEST_CASE("gen: 500 states all valid", "[gen][validity]") {
 }
 
 // ---------------------------------------------------------------------------
-// 4. BerryHolders: 100% hold a stress item
+// 4. BerryHolders: opponent 100% holds a stress item; player 30% item-free
+//    (player-side NONE weighting is a USER decision: the wave-0 analytic only
+//    certifies item-free players, and the prototype's calibration generator
+//    gave each side 30% NONE — without this, analytic audits decide nothing).
 // ---------------------------------------------------------------------------
 
-TEST_CASE("gen: BerryHolders 100% hold stress item", "[gen][berry_holders]") {
+TEST_CASE("gen: BerryHolders opp 100% stress item, player 30% item-free", "[gen][berry_holders]") {
     // Stress items = Sitrus + Custap + pinch berries + confusion/pinch berries
     // IDs: Sitrus=158, Custap=210, Liechi=201, Ganlon=202, Salac=203, Petaya=204,
     //      Apicot=205, Lansat=206, Starf=207, Figy=159, Wiki=160, Mago=161, Aguav=162, Iapapa=163
@@ -191,14 +194,45 @@ TEST_CASE("gen: BerryHolders 100% hold stress item", "[gen][berry_holders]") {
     };
 
     MatchupGen gen(99999, MatchupGen::Class::BerryHolders, 0, 1, data_paths());
-    for (int i = 0; i < 100; ++i) {
+    int player_none = 0;
+    const int N = 500;
+    for (int i = 0; i < N; ++i) {
         BattleState s = gen.next();
         INFO("state index " << i);
 
         const PokemonState& p0 = s.side0.team[0];
         const PokemonState& p1 = s.side1.team[0];
 
-        REQUIRE(STRESS_ITEMS.count(p0.item) > 0);
+        // Opponent: always a stress item (class purpose preserved).
         REQUIRE(STRESS_ITEMS.count(p1.item) > 0);
+        // Player: NONE (30%) or a stress item — never anything else.
+        if (p0.item == 0) ++player_none;
+        else REQUIRE(STRESS_ITEMS.count(p0.item) > 0);
     }
+    // 30% ± 3-sigma band for N=500 (sigma ≈ 2.05%): [0.24, 0.36] → counts [120, 180].
+    REQUIRE(player_none >= 120);
+    REQUIRE(player_none <= 180);
+}
+
+// ---------------------------------------------------------------------------
+// 4b. Uniform: player 30% item-free; opponent always holds an item.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("gen: Uniform player 30% item-free, opp always holds item", "[gen][uniform_items]") {
+    MatchupGen gen(99999, MatchupGen::Class::Uniform, 0, 1, data_paths());
+    int player_none = 0;
+    const int N = 500;
+    for (int i = 0; i < N; ++i) {
+        BattleState s = gen.next();
+        INFO("state index " << i);
+
+        const PokemonState& p0 = s.side0.team[0];
+        const PokemonState& p1 = s.side1.team[0];
+
+        REQUIRE(p1.item != 0);          // opponent mirrors live-play: always an item
+        if (p0.item == 0) ++player_none;
+    }
+    // Same 3-sigma band as above.
+    REQUIRE(player_none >= 120);
+    REQUIRE(player_none <= 180);
 }

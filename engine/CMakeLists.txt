@@ -92,13 +92,16 @@ target_link_libraries(nuzlocke_engine_cpp PRIVATE nuzlocke_core)
 # never depend on solver). Same compile flags as core are inherited via add_compile_options
 # at the top of this file.
 add_library(nuzlocke_solver STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/oracle_types.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/engine_queries.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/state_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/question.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/transition_oracle.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/action_space.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/matchup_gen.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/audit_core.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/audit_analytic_core.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bsolver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/analytic/analytic.cpp
 )
 set_target_properties(nuzlocke_solver PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(nuzlocke_solver PUBLIC nuzlocke_core)
@@ -114,6 +117,42 @@ add_executable(audit_oracle EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/audit_oracle.cpp)
 target_link_libraries(audit_oracle PRIVATE nuzlocke_solver nuzlocke_core)
 target_compile_definitions(audit_oracle PRIVATE
+    NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+# bcheck: cross-check bsolver-exact vs naive reference walker on generator matchups.
+# EXCLUDE_FROM_ALL: never built by default; build on demand:
+#   cmake --build engine/build --target bcheck
+add_executable(bcheck EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/bcheck.cpp)
+target_link_libraries(bcheck PRIVATE nuzlocke_solver nuzlocke_core)
+target_compile_definitions(bcheck PRIVATE
+    NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+# ccheck: pessimal/coarse-vs-exact theorem audit.
+# EXCLUDE_FROM_ALL: never built by default; build on demand:
+#   cmake --build engine/build --target ccheck
+add_executable(ccheck EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/ccheck.cpp)
+target_link_libraries(ccheck PRIVATE nuzlocke_solver nuzlocke_core)
+target_compile_definitions(ccheck PRIVATE
+    NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+# audit_analytic: tiered analytic-certifier audit (analytic → pessimal → exact verification).
+# EXCLUDE_FROM_ALL: never built by default; build on demand:
+#   cmake --build engine/build --target audit_analytic
+add_executable(audit_analytic EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/audit_analytic.cpp)
+target_link_libraries(audit_analytic PRIVATE nuzlocke_solver nuzlocke_core)
+target_compile_definitions(audit_analytic PRIVATE
+    NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+# analytic_trace: single-matchup analytic trace printer and oracle-child inspector.
+# EXCLUDE_FROM_ALL: never built by default; build on demand:
+#   cmake --build engine/build --target analytic_trace
+add_executable(analytic_trace EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/analytic_trace.cpp)
+target_link_libraries(analytic_trace PRIVATE nuzlocke_solver nuzlocke_core)
+target_compile_definitions(analytic_trace PRIVATE
     NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 # solver_trace: single-case debug trace tool for diagnosing oracle failures.

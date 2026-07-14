@@ -24,4 +24,6 @@
 
 **Solver (phase 1):** `engine/src/solver/` — `nuzlocke_solver` static lib (one-way dep on core): exact 1v1 transition oracle (`transition_oracle.cpp`, DFS prefix-replay over Cat-B injection + Cat-A overrides), state codec, Question classifier, action space, matchup generator. Audit/bench tools: `audit_oracle` (selfcheck/mc), `solver_trace`, `bench_oracle` (all EXCLUDE_FROM_ALL).
 
+**Solver (phase 2, paused):** `bsolver.cpp` exact AND-OR certifier (dedicated 256 MB-stack thread) with oracle collapse modes (pessimal = LOSS-pruner only), wave-0 analytic certifier, and tiered audit tools (`audit_analytic`, `analytic_trace`, `SCRIPTS/wave_unlock.py`). Paused 2026-07-14 for a new user-designed bsolver-successor — see `SOLVER_PHASE2_STATE.md`.
+
 **Stress test:** `SCRIPTS/stress_test.py` — loops battles from `States/` savestates, 100% `RandomPolicy`, logs to `/tmp/vision/stress/`.

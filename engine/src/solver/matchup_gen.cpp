@@ -62,8 +62,8 @@ static const int32_t SASH_STURDY_ITEMS[] = { ITEM_FOCUS_SASH, ITEM_FOCUS_BAND };
 static const int SASH_STURDY_ITEM_COUNT = 2;
 
 // General item pool (mirrors GENERAL_ITEMS from liveplay/battle_gen.py; validated at Python import).
-// 122 items — includes ITEM_NONE (0) at index 0 to allow player item=NONE with 20% chance.
-// For pure-random matchups both sides always hold an item (no NONE), matching opponent logic.
+// 122 items — no ITEM_NONE entry. Item-free PLAYER mons come from the explicit 30%
+// override in generate_mon (see matchup_gen.h Class comment); opponents always hold one.
 static const int32_t GENERAL_ITEMS[] = {
     158, 157, 155, 149, 150, 151, 152, 153, 154, 156,     // Status-curing / HP berries
     159, 160, 161, 162, 163,                               // Confusion/pinch berries
@@ -254,7 +254,7 @@ int32_t MatchupGen::sample_item(int32_t species_id) {
 // Mon generation
 // ---------------------------------------------------------------------------
 
-PokemonState MatchupGen::generate_mon(int32_t species_id) {
+PokemonState MatchupGen::generate_mon(int32_t species_id, bool is_player) {
     const SpeciesData* sd = find_species_data(species_id);
     if (!sd)
         throw std::runtime_error("MatchupGen: no SpeciesData for id " +
@@ -305,6 +305,14 @@ PokemonState MatchupGen::generate_mon(int32_t species_id) {
         }
         // species without Sturdy: just use Focus Sash or Focus Band (already sampled)
     }
+
+    // Player-side item-free override (USER decision; see matchup_gen.h Class comment):
+    // 30% NONE in every class so wave-0+ analytic audits get in-scope matchups.
+    // The draw is unconditional for the player so the RNG stream stays aligned
+    // regardless of outcome. Applied AFTER all class item logic (a SashSturdy mon
+    // that kept Sturdy via the override above remains a valid stress mon item-free).
+    if (is_player && (rng_() % 100) < 30)
+        item_id = ITEM_NONE;
 
     // Sample nature (uniform, Hardy=neutral is index 0)
     int32_t nature_id = static_cast<int32_t>(rng_() % 25);
@@ -368,8 +376,8 @@ BattleState MatchupGen::generate_one() {
     int32_t sp0 = species_pool_[idx0];
     int32_t sp1 = species_pool_[idx1];
 
-    PokemonState mon0 = generate_mon(sp0);
-    PokemonState mon1 = generate_mon(sp1);
+    PokemonState mon0 = generate_mon(sp0, /*is_player=*/true);
+    PokemonState mon1 = generate_mon(sp1, /*is_player=*/false);
 
     BattleState s{};
     s.side0.team.push_back(mon0);

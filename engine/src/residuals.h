@@ -36,4 +36,9 @@ void cpp_apply_residuals(BattleState& state, const ResidualLuck& luck,
                          const ResidualCtx& ctx,
                          std::vector<PendingSwitch>& pending_switches);
 
+// Emergency Exit / Wimp Out crossing check for one battler at active_idx on side si.
+// hp_before is the HP captured before residual damage. Exposed for native tests.
+void emergency_exit_check(BattleState& s, int si, int active_idx, int hp_before,
+                          std::vector<PendingSwitch>& pending);
+
 #endif // NUZLOCKE_RESIDUALS_H

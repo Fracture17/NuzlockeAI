@@ -32,6 +32,11 @@ struct RngParticipants {
 // p_chosen: probability of the chosen outcome. -1.0 = sentinel (cannot attribute).
 // Every Cat-B site must populate a real probability; -1.0 is only for Cat-A events
 // where the oracle owns the distribution.
+//
+// DAMAGE_ROLL annotation: dmg_by_roll[i] holds the final damage for roll_int=i (0..15),
+// computed through the full post-roll modifier chain at the resolution site in damage.cpp.
+// has_dmg_by_roll is set to 1 only when the annotation is present (log was active and
+// this is a 16-outcome DAMAGE_ROLL entry). Computing the 16 damages consumes NO RNG.
 struct AnalyticalRngEntry {
     int32_t turn = 0;
     int32_t event = 0;          // RngEventC value
@@ -41,7 +46,8 @@ struct AnalyticalRngEntry {
     InlineVec<int32_t, 16> options{};
     uint16_t options_count = 0;  // total option count (may exceed options.size())
     uint8_t  options_truncated = 0;  // 1 when options_count > 16
-    uint8_t  _pad = 0;
+    uint8_t  has_dmg_by_roll = 0;   // 1 iff dmg_by_roll[] is populated
+    int32_t  dmg_by_roll[16] = {};  // final damage per roll_int (0..15); valid iff has_dmg_by_roll
 };
 
 static_assert(std::is_trivially_copyable<AnalyticalRngEntry>::value,
@@ -102,6 +108,26 @@ inline void analytical_rng_log_draw(int turn, int event_id,
                                     double p_chosen = -1.0) {
     analytical_rng_log_draw(turn, event_id, who, chosen,
                             options.begin(), options.size(), p_chosen);
+}
+
+// Annotate the last log entry with per-roll final damages (damage.cpp post-roll chain).
+// Throws std::runtime_error if the log is empty or the last entry is not a 16-outcome
+// DAMAGE_ROLL (RngEventC::DAMAGE_ROLL == 5) event. Zero cost when the log is null.
+// Called immediately after rng_resolve_damage_roll logs the entry, before any other draw.
+// Uses raw integer 5 (= RngEventC::DAMAGE_ROLL) to avoid circular include with oracle.h.
+inline void annotate_last_damage_roll(AnalyticalRngLog& log, const int32_t dmg_by_roll[16]) {
+    if (log.entries.empty())
+        throw std::runtime_error("annotate_last_damage_roll: log is empty");
+    AnalyticalRngEntry& e = log.entries.back();
+    static constexpr int32_t DAMAGE_ROLL_EVENT = 5;  // RngEventC::DAMAGE_ROLL
+    if (e.event != DAMAGE_ROLL_EVENT
+            || e.options_truncated != 0
+            || e.options_count != 16)
+        throw std::runtime_error(
+            "annotate_last_damage_roll: last entry is not a 16-outcome DAMAGE_ROLL "
+            "(event=" + std::to_string(e.event) + ")");
+    for (int i = 0; i < 16; ++i) e.dmg_by_roll[i] = dmg_by_roll[i];
+    e.has_dmg_by_roll = 1;
 }
 
 // Occurrence-keyed Category-B injection channel.

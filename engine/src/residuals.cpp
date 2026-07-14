@@ -590,24 +590,6 @@ bool res_tick_timed_volatiles(BattleState& s, int si, int active_idx) {
     return false;
 }
 
-// Emergency Exit / Wimp Out: queue a pending switch if HP crossed half.
-void emergency_exit_check(BattleState& s, int si, int active_idx, int hp_before,
-                          std::vector<PendingSwitch>& pending) {
-    SideState& side = side_at(s, si);
-    PokemonState& p = side.team[active_idx];
-    if (p.ability != AB_EMERGENCY_EXIT && p.ability != AB_WIMP_OUT) return;
-    if (p.hp <= 0) return;
-    int32_t half = p.max_hp / 2;
-    if (!(hp_before > half && half >= p.hp)) return;
-    bool bench = false;
-    for (size_t i = 0; i < side.team.size(); ++i) {
-        bool active = false;
-        for (int32_t ai : side.active_indices) if ((int)i == ai) { active = true; break; }
-        if (!active && !side.team[i].fainted) { bench = true; break; }
-    }
-    if (bench) pending.push_back({si, "emergency_exit"});
-}
-
 // _apply_damage (Future Sight path): Endure / Focus Band / Focus Sash / Sturdy + berry check.
 constexpr int32_t VOL_ENDURE_ACTIVE = 2097152;  // Volatile.ENDURE_ACTIVE (was wrongly 128 = CHARGING)
 constexpr int32_t I_FOCUS_BAND = 230, I_FOCUS_SASH = 275;
@@ -658,6 +640,25 @@ bool is_initiator(const ResidualCtx& ctx, int side_idx, int team_idx) {
 }
 
 } // namespace
+
+// Emergency Exit / Wimp Out: queue a pending switch if HP crossed half.
+// Exposed outside the anonymous namespace so native tests can call it directly.
+void emergency_exit_check(BattleState& s, int si, int active_idx, int hp_before,
+                          std::vector<PendingSwitch>& pending) {
+    SideState& side = side_at(s, si);
+    PokemonState& p = side.team[active_idx];
+    if (p.ability != AB_EMERGENCY_EXIT && p.ability != AB_WIMP_OUT) return;
+    if (p.hp <= 0) return;
+    int32_t half = p.max_hp / 2;
+    if (!(hp_before > half && half >= p.hp)) return;
+    bool bench = false;
+    for (size_t i = 0; i < side.team.size(); ++i) {
+        bool active = false;
+        for (int32_t ai : side.active_indices) if ((int)i == ai) { active = true; break; }
+        if (!active && !side.team[i].fainted) { bench = true; break; }
+    }
+    if (bench) pending.push_back({si, "emergency_exit"});
+}
 
 // ===========================================================================
 // cpp_apply_residuals

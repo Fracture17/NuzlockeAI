@@ -25,14 +25,18 @@
 // ---------------------------------------------------------------------------
 
 // Collect all leaves from step() into a vector; return stats.
+// aggregate=false preserves the pre-aggregation behavior (16 raw rolls per DAMAGE_ROLL site)
+// for tests that check exact leaf counts under the un-merged expansion.
 static StepStats collect_leaves(TransitionOracle& oracle,
                                  const BattleState& state,
                                  const ExecAction& player_action,
                                  OrderingHint hint,
                                  std::vector<ChildOutcome>& out,
-                                 uint64_t max_leaves = 1'000'000) {
+                                 uint64_t max_leaves = 1'000'000,
+                                 bool aggregate = false) {
     TransitionOracle::Config cfg;
     cfg.max_leaves = max_leaves;
+    cfg.aggregate_damage_rolls = aggregate;
     return oracle.step(state, player_action, [&](ChildOutcome co) -> bool {
         out.push_back(co);
         return true;
@@ -248,13 +252,14 @@ TEST_CASE("oracle: Rock Blast hit-count mass for 2-hit class with budget cap", "
     TransitionOracle oracle;
     TransitionOracle::Config cfg;
     cfg.max_leaves = 5000;
+    cfg.aggregate_damage_rolls = false;  // test the un-aggregated expansion (16^n per hit)
     std::vector<ChildOutcome> leaves;
     auto stats = oracle.step(s, pa, [&](ChildOutcome co) -> bool {
         leaves.push_back(co); return true;
     }, OrderingHint::Natural, cfg);
 
     REQUIRE_FALSE(stats.aborted);
-    // Budget exceeded since 4-hit class alone has 65536 leaves
+    // Budget exceeded since 4-hit class alone has 65536 leaves (with aggregation OFF)
     REQUIRE(stats.budget_exceeded);
     // Partial mass must be < 1 (incomplete enumeration)
     double partial = sum_probs(leaves);

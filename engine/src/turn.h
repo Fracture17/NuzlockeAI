@@ -77,6 +77,19 @@ struct TurnPause {
 // pre_inject: optional plain-mode event-answer map (RngEventC int → value). Sticky/non-consuming:
 //   consulted on every resolution site when overrides==nullptr. Absent key → falls through to
 //   oracle_resolve → NeedsRNG. nullptr = byte-identical engine path (no effect).
+// Select and apply one FORCED_PIVOT switch for side `si`.
+// Handles oracle mode (oracle_resolve → NeedsRNG on no override), forced-trace mode
+// (policy select_switch consumes from trace), and plain mode (policy random draw).
+// Clears exp_participants[0] for side-1 switches. Returns chosen team index, or -1 if
+// candidates is empty (no switch applied in that case).
+int cpp_resolve_one_forced_pivot(BattleState& state, int si,
+                                  Policy* policies[2],
+                                  std::vector<std::vector<int32_t>>& exp_participants,
+                                  const OracleOverrides* overrides,
+                                  NativeRng* rng,
+                                  ExecCtx* ctx,
+                                  int32_t* hp_before_out = nullptr);
+
 void cpp_run_one_turn(BattleState& state,
                       const std::vector<ExecAction>& actions_p0,
                       const std::vector<ExecAction>& actions_p1,
