@@ -2300,3 +2300,24 @@ file = "engine/src/solver/bucket/concede.cpp"
 confidence = "settled"
 rationale = "MULTI_HIT_HARD fires iff max_hits>1 AND defender has live Half/Quarter consumable threshold t (never FullHp) AND max single-hit damage > t - amendment 8(b) single-hit-spans-threshold-to-KO. Precise: rcheck census decides per-hit enumeration."
 updated = "2026-07-15T18:41:24.030Z"
+
+[[record]]
+name = "bucket_onstack_fail_semantics"
+file = "engine/src/solver/bucket/win_solver.cpp"
+confidence = "settled"
+rationale = "Repeated on-stack bucket = FAIL (amendment 16a), deliberately diverging from bsolver INDETERMINATE(Cycle). Repeats currently unreachable via real dynamics (PP-in-d changes every turn), so the mechanism is tested via the cfg.expand_override seam."
+updated = "2026-07-15T19:28:09.299Z"
+
+[[record]]
+name = "bucket_win_tri_valued_local"
+file = "engine/src/solver/bucket/win_solver.cpp"
+confidence = "settled"
+rationale = "INDETERMINATE propagates locally (per action/child), never as global abort - a depth-capped branch cannot destroy a WIN via another action; root FAIL requires all actions failing. FAIL is NOT a LOSS certificate; pipeline maps both to UNKNOWN."
+updated = "2026-07-15T19:28:19.121Z"
+
+[[record]]
+name = "bucket_win_root_and_caps"
+file = "engine/src/solver/bucket/win_solver.cpp"
+confidence = "provisional"
+rationale = "Root bucket = singleton HP intervals at initial state (sound, simplest; segment-wide roots are a later sweep-reuse optimization). visit_cap 1e6 -> INDETERMINATE(VisitCap) added beyond the required depth cap as insurance since there is no memoization."
+updated = "2026-07-15T19:28:21.077Z"

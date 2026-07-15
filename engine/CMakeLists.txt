@@ -107,6 +107,7 @@ add_library(nuzlocke_solver STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/breakpoints.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/bucket.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/expand.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/win_solver.cpp
 )
 set_target_properties(nuzlocke_solver PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(nuzlocke_solver PUBLIC nuzlocke_core)
