@@ -896,3 +896,117 @@ TEST_CASE("expand: burn-secondary Ember creates burned/unburned children",
     for (const auto& c : r.children) ds.insert(c.bucket.d());
     REQUIRE(ds.size() >= 2);
 }
+
+// ---------------------------------------------------------------------------
+// Task 6 work item C — supported fixed-damage moves EXPAND (no longer §5.2 throw).
+// Ids: Sonic Boom(49)=20, Dragon Rage(82)=40, Seismic Toss(69)=level, Psywave(149).
+// ---------------------------------------------------------------------------
+
+static constexpr int32_t MV_SONIC_BOOM   = 49;
+static constexpr int32_t MV_DRAGON_RAGE  = 82;
+static constexpr int32_t MV_SEISMIC_TOSS = 69;
+static constexpr int32_t MV_PSYWAVE      = 149;
+static constexpr int32_t MV_FISSURE      = 90;
+
+TEST_CASE("expand: supported fixed-damage moves produce verified children",
+          "[bucket][expand][fixed_damage]")
+{
+    struct Case { int32_t move; int32_t dmg; };
+    // Attacker level is 50, so Seismic Toss deals 50.
+    Case cases[] = {{MV_SONIC_BOOM, 20}, {MV_DRAGON_RAGE, 40}, {MV_SEISMIC_TOSS, 50}};
+    for (const Case& c : cases) {
+        PokemonState p = make_mon({.hp=200, .move0=c.move});
+        PokemonState o = make_mon({.species=2, .hp=200, .ability=AB_SHELL_ARMOR,
+                                    .speed=60, .move0=MV_SPLASH});
+        BattleState s = make_state(p, o);
+
+        ExpandFixture fx(s, default_question());
+        ExecAction pa = player_move_action(0);
+        // Opp interval well clear of 0 so the fixed hit does not saturate.
+        Bucket A = bucket_from(s, HpInterval{150, 200}, HpInterval{100, 180},
+                               fx.bp, fx.interner);
+
+        ExpandResult r = expand(A, pa, fx.ctx);
+        REQUIRE(r.concession_tag == 0);
+        REQUIRE_FALSE(r.children.empty());
+
+        int32_t cover_lo = INT32_MAX, cover_hi = INT32_MIN;
+        for (const auto& ch : r.children) {
+            cover_lo = std::min(cover_lo, ch.bucket.opp_hp().lo);
+            cover_hi = std::max(cover_hi, ch.bucket.opp_hp().hi);
+        }
+        REQUIRE(cover_lo == 100 - c.dmg);
+        REQUIRE(cover_hi == 180 - c.dmg);
+    }
+}
+
+TEST_CASE("expand: Psywave expands (variable fixed-damage value set)",
+          "[bucket][expand][fixed_damage]")
+{
+    PokemonState p = make_mon({.hp=200, .move0=MV_PSYWAVE});
+    PokemonState o = make_mon({.species=2, .hp=200, .ability=AB_SHELL_ARMOR,
+                                .speed=60, .move0=MV_SPLASH});
+    BattleState s = make_state(p, o);
+
+    ExpandFixture fx(s, default_question());
+    ExecAction pa = player_move_action(0);
+    // Psywave at level 50 spans ~25..75 damage; keep the opp interval clear of 0.
+    Bucket A = bucket_from(s, HpInterval{150, 200}, HpInterval{120, 180},
+                           fx.bp, fx.interner);
+
+    ExpandResult r = expand(A, pa, fx.ctx);
+    REQUIRE(r.concession_tag == 0);
+    REQUIRE_FALSE(r.children.empty());
+    // Coverage spans the full Psywave value set: max value 75, min value 25.
+    int32_t cover_lo = INT32_MAX, cover_hi = INT32_MIN;
+    for (const auto& ch : r.children) {
+        cover_lo = std::min(cover_lo, ch.bucket.opp_hp().lo);
+        cover_hi = std::max(cover_hi, ch.bucket.opp_hp().hi);
+    }
+    REQUIRE(cover_lo == 120 - 75);
+    REQUIRE(cover_hi == 180 - 25);
+}
+
+// ---------------------------------------------------------------------------
+// Task 6 work item D — OHKO moves STILL throw UnsupportedMove (pins the all-zero
+// damage-table false-WIN failure mode; inventory §14 #6).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("expand: OHKO move (Fissure) throws UnsupportedMove (player side)",
+          "[bucket][expand][fail_loud][ohko]")
+{
+    PokemonState p = make_mon({.hp=200, .move0=MV_FISSURE});
+    PokemonState o = make_mon({.species=2, .hp=200, .ability=AB_SHELL_ARMOR,
+                                .speed=60, .move0=MV_SPLASH});
+    BattleState s = make_state(p, o);
+
+    ExpandFixture fx(s, default_question());
+    ExecAction pa = player_move_action(0);
+    Bucket A = bucket_from(s, HpInterval{150, 200}, HpInterval{100, 180},
+                           fx.bp, fx.interner);
+
+    bool threw = false;
+    try { expand(A, pa, fx.ctx); }
+    catch (const ExpandError& e) {
+        threw = true;
+        REQUIRE(e.stage == ExpandError::Stage::UnsupportedMove);
+        REQUIRE(std::string(e.what()).find("90") != std::string::npos);
+    }
+    REQUIRE(threw);
+}
+
+TEST_CASE("expand: OHKO move (Fissure) in AI support throws UnsupportedMove",
+          "[bucket][expand][fail_loud][ohko]")
+{
+    PokemonState p = make_mon({.hp=200, .move0=MV_SPLASH});
+    PokemonState o = make_mon({.species=2, .hp=200, .ability=AB_SHELL_ARMOR,
+                                .speed=60, .move0=MV_FISSURE});
+    BattleState s = make_state(p, o);
+
+    ExpandFixture fx(s, default_question());
+    ExecAction pa = player_move_action(0);
+    Bucket A = bucket_from(s, HpInterval{150, 200}, HpInterval{100, 180},
+                           fx.bp, fx.interner);
+
+    REQUIRE_THROWS_AS(expand(A, pa, fx.ctx), ExpandError);
+}

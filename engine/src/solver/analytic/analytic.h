@@ -7,6 +7,7 @@
 #ifndef NUZLOCKE_SOLVER_ANALYTIC_H
 #define NUZLOCKE_SOLVER_ANALYTIC_H
 
+#include "solver/move_scope.h"   // SCOPE_* bitmask (shared with bucket concede detectors)
 #include "solver/question.h"
 #include "state.h"
 
@@ -34,28 +35,9 @@ enum ATag : int {
     AT_CAP      = 6,   // turn/line/depth cap hit
 };
 
-// ---------------------------------------------------------------------------
-// Scope-reason bitmask: ALL failing scope reasons accumulate into scope_mask.
-// The analytic accumulates every bit before returning UNKNOWN(AT_SCOPE) so
-// callers and audit tools see the complete reason set, not just the first.
-// ---------------------------------------------------------------------------
-
-// Both-or-neither: accumulate even when another bit is set first.
-constexpr uint32_t SCOPE_MULTI_HIT          = (1u << 0);  // player or opp has multi-hit move
-constexpr uint32_t SCOPE_ACCURACY_LT100     = (1u << 1);  // move accuracy < 100 (and != -1)
-constexpr uint32_t SCOPE_SECONDARY          = (1u << 2);  // move has non-trivial secondary effect
-constexpr uint32_t SCOPE_RECOIL             = (1u << 3);  // move has recoil
-constexpr uint32_t SCOPE_DRAIN              = (1u << 4);  // move has drain
-constexpr uint32_t SCOPE_BINDING            = (1u << 5);  // move is a binding/trapping move
-constexpr uint32_t SCOPE_CHARGE_TURN        = (1u << 6);  // move requires a charge turn
-constexpr uint32_t SCOPE_PRIORITY          = (1u << 7);   // move has non-zero priority
-constexpr uint32_t SCOPE_HP_DEP_BP          = (1u << 8);  // move has HP-dependent base power
-constexpr uint32_t SCOPE_WEATHER_SCREEN     = (1u << 9);  // active weather, terrain, or screens
-constexpr uint32_t SCOPE_ENTRY_DIRTY        = (1u << 10); // non-clean entry (status/boost/volatile/side cond)
-constexpr uint32_t SCOPE_ITEM_NOT_ALLOWED   = (1u << 11); // player or opp item outside allowlist
-constexpr uint32_t SCOPE_OPP_NO_DAMAGE      = (1u << 12); // opp has no effective damaging move (AT_STALL)
-constexpr uint32_t SCOPE_NONDEFAULT_QUESTION = (1u << 13); // non-default Question field set
-constexpr uint32_t SCOPE_RESIDUAL_UNKNOWN   = (1u << 14); // hp_thresholds residual_unknown on either side
+// Scope-reason bitmask (SCOPE_*) is defined in solver/move_scope.h, included above,
+// and shared with the bucket concede detectors. ALL failing scope reasons accumulate
+// into scope_mask before returning UNKNOWN(AT_SCOPE).
 
 // ---------------------------------------------------------------------------
 // AnalyticResult

@@ -197,6 +197,76 @@ int32_t move_id_at_slot(const BattleState& s, int side, int slot) {
     }
 }
 
+// Resolve a move id from an action (override wins over slot).
+int32_t resolve_action_move_id(const BattleState& s, int side, const ExecAction& a) {
+    if (a.move_override >= 0) return a.move_override;
+    return move_id_at_slot(s, side, a.move_slot);
+}
+
+// The five HP-INDEPENDENT fixed-damage moves are SUPPORTED (record fixed_damage_supported):
+// their damage never reads defender HP and cannot crit, so a synthesized damage set drives
+// ordinary derived splits + replay verification. All OTHER cpp_is_fixed_damage_move ids
+// (Super Fang, Endeavor, Counter, ...) stay UnsupportedMove. Ids: Sonic Boom/Dragon Rage/
+// Seismic Toss/Night Shade/Psywave (core_leaf.cpp:417-446).
+constexpr int32_t SUPPORTED_FIXED_DAMAGE[] = {49, 82, 69, 101, 149};
+// OHKO moves (move_exec_damage.cpp:67): damage = defender HP applied OUTSIDE
+// cpp_calculate_damage, so damage_table is all-zero → the equality screen would pass and
+// produce a false all-survive image. Inventory §14 #6: THROW UnsupportedMove; the
+// always-kill fast path is the future refinement.
+constexpr int32_t OHKO_MOVES[] = {12, 32, 90, 329};
+
+bool in_move_list(const int32_t* arr, int n, int32_t v) {
+    for (int i = 0; i < n; ++i) if (arr[i] == v) return true;
+    return false;
+}
+bool is_supported_fixed_move(int32_t id) {
+    return in_move_list(SUPPORTED_FIXED_DAMAGE, 5, id);
+}
+bool is_ohko_move(int32_t id) {
+    return in_move_list(OHKO_MOVES, 4, id);
+}
+
+// Distinct positive damage values for a supported fixed-damage move (HP-independent),
+// mirroring cpp_compute_fixed_damage (core_leaf.cpp:417-446).
+std::vector<int32_t> supported_fixed_damage_set(const BattleState& s, int attacker_side,
+                                                int32_t move_id) {
+    const PokemonState& atk = active_of(s, attacker_side);
+    std::set<int32_t> vals;
+    switch (move_id) {
+        case 49:  vals.insert(20); break;                              // Sonic Boom
+        case 82:  vals.insert(40); break;                              // Dragon Rage
+        case 69:                                                        // Seismic Toss
+        case 101: vals.insert(std::max(1, atk.level)); break;          // Night Shade
+        case 149: {                                                     // Psywave: k in [0,100]
+            int64_t level = atk.level;
+            for (int k = 0; k <= 100; ++k) {
+                int64_t roll_int = 50 + k;
+                vals.insert(static_cast<int32_t>(std::max<int64_t>(1, roll_int * level / 100)));
+            }
+            break;
+        }
+        default: break;
+    }
+    return std::vector<int32_t>(vals.begin(), vals.end());
+}
+
+// Damage table used for delta-pool construction. Supported fixed-damage moves return a
+// synthesized HP-independent table with an EMPTY crit class (crit-vacuous: they cannot
+// crit); every other move uses the real damage_table.
+DamageTable effective_damage_table(const BattleState& s, int attacker_side,
+                                   const ExecAction& act) {
+    int32_t mid = resolve_action_move_id(s, attacker_side, act);
+    if (mid > 0 && is_supported_fixed_move(mid)) {
+        DamageTable t;
+        t.noncrit = supported_fixed_damage_set(s, attacker_side, mid);
+        // crit left empty on purpose — fixed-damage moves cannot crit.
+        t.max_hits = 1;
+        t.immune = t.noncrit.empty();
+        return t;
+    }
+    return damage_table(s, attacker_side, act);
+}
+
 } // namespace
 
 // Superset of one-turn HP-delta candidates for one side's active mon. Positive =
@@ -659,7 +729,15 @@ ExpandResult expand(const Bucket& A, const ExecAction& player_move, ExpandContex
         DamageTable dt_hi = damage_table(hi_state, /*attacker=*/0, player_move);
         int32_t pl_mid = move_id_at_slot(lo_state, 0, player_move.move_slot);
         if (!ctx.options.skip_hp_dependent_screen) {
-            if (pl_mid > 0 && cpp_is_fixed_damage_move(pl_mid)) {
+            if (pl_mid > 0 && is_ohko_move(pl_mid)) {
+                throw ExpandError(ExpandError::Stage::UnsupportedMove,
+                    "expand: player move slot=" + std::to_string(player_move.move_slot)
+                    + " move_id=" + std::to_string(pl_mid)
+                    + " is an OHKO move (inventory §14 #6 all-zero damage-table) — UnsupportedMove");
+            }
+            // Supported fixed-damage moves (fixed_damage_supported) pass through; only the
+            // HP-dependent fixed-damage moves (Super Fang, Endeavor, Counter, ...) throw.
+            if (pl_mid > 0 && cpp_is_fixed_damage_move(pl_mid) && !is_supported_fixed_move(pl_mid)) {
                 throw ExpandError(ExpandError::Stage::UnsupportedMove,
                     "expand: player move slot=" + std::to_string(player_move.move_slot)
                     + " move_id=" + std::to_string(pl_mid)
@@ -688,7 +766,13 @@ ExpandResult expand(const Bucket& A, const ExecAction& player_move, ExpandContex
         DamageTable dt_hi = damage_table(hi_state, /*attacker=*/1, aim);
         int32_t ai_mid = move_id_at_slot(lo_state, 1, aim.move_slot);
         if (!ctx.options.skip_hp_dependent_screen) {
-            if (ai_mid > 0 && cpp_is_fixed_damage_move(ai_mid)) {
+            if (ai_mid > 0 && is_ohko_move(ai_mid)) {
+                throw ExpandError(ExpandError::Stage::UnsupportedMove,
+                    "expand: AI move slot=" + std::to_string(aim.move_slot)
+                    + " move_id=" + std::to_string(ai_mid)
+                    + " is an OHKO move (inventory §14 #6 all-zero damage-table) — UnsupportedMove");
+            }
+            if (ai_mid > 0 && cpp_is_fixed_damage_move(ai_mid) && !is_supported_fixed_move(ai_mid)) {
                 throw ExpandError(ExpandError::Stage::UnsupportedMove,
                     "expand: AI move slot=" + std::to_string(aim.move_slot)
                     + " move_id=" + std::to_string(ai_mid)
@@ -748,12 +832,14 @@ ExpandResult expand(const Bucket& A, const ExecAction& player_move, ExpandContex
     };
 
     {
+        // Supported fixed-damage moves have an all-zero real damage_table; synthesize
+        // their HP-independent damage set so derived splits + kill-zone singletons fire.
         for (const ExecAction& aim : ai_actions) {
-            DamageTable dt = damage_table(lo_state, 1, aim);
+            DamageTable dt = effective_damage_table(lo_state, 1, aim);
             push_attack_pool(pl_delta_pool, pl_max_dmg, dt);
         }
         {
-            DamageTable dt = damage_table(lo_state, 0, player_move);
+            DamageTable dt = effective_damage_table(lo_state, 0, player_move);
             push_attack_pool(op_delta_pool, op_max_dmg, dt);
         }
         for (int32_t d : residual_delta_candidates(lo_state, 0)) pl_delta_pool.push_back(d);

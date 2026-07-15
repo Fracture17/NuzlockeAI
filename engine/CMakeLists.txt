@@ -93,6 +93,8 @@ target_link_libraries(nuzlocke_engine_cpp PRIVATE nuzlocke_core)
 # at the top of this file.
 add_library(nuzlocke_solver STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/engine_queries.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/move_scope.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/concede.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/state_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/question.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/transition_oracle.cpp

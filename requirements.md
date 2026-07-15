@@ -2279,3 +2279,24 @@ file = "engine/src/solver/bucket/"
 confidence = "requirement"
 rationale = "Player LEVEL is an input parameter of the Question (staying under level cap manipulates AI - viable tactic, USER amendment 20c). Level-up applies AFTER matchup end, BEFORE end-state check. EXP/level-up handling deferred to Solver C / 6v6 design."
 updated = "2026-07-15T17:18:57.703Z"
+
+[[record]]
+name = "move_scope_shared_extraction"
+file = "engine/src/solver/move_scope.cpp"
+confidence = "settled"
+rationale = "SCOPE_* constants + check_move_scope + HP_DEP/BINDING lists extracted from analytic.cpp so bucket concede reuses (never forks) the classifier; analytic.h re-includes it. Extraction fixed a latent OOB read (N_HP_DEP_MOVES=45 vs 44 elements)."
+updated = "2026-07-15T18:40:52.957Z"
+
+[[record]]
+name = "concede_conventions"
+file = "engine/src/solver/bucket/concede.cpp"
+confidence = "settled"
+rationale = "concede_tags = f(lo)|f(hi) union (sound: FAIL-only; needed for the one HP-reading detector MULTI_HIT_HARD). Quick Claw/Draw always tag when present (conservative). Opponent SELECTING Substitute not scanned: child carries volatile, concedes later."
+updated = "2026-07-15T18:41:16.457Z"
+
+[[record]]
+name = "multi_hit_hard_condition"
+file = "engine/src/solver/bucket/concede.cpp"
+confidence = "settled"
+rationale = "MULTI_HIT_HARD fires iff max_hits>1 AND defender has live Half/Quarter consumable threshold t (never FullHp) AND max single-hit damage > t - amendment 8(b) single-hit-spans-threshold-to-KO. Precise: rcheck census decides per-hit enumeration."
+updated = "2026-07-15T18:41:24.030Z"

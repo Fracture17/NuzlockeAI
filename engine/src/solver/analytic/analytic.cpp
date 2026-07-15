@@ -32,77 +32,9 @@ static constexpr int32_t ITEM_SITRUS     = 158;
 static constexpr int32_t ITEM_FOCUS_SASH = 275;
 static constexpr int32_t ITEM_STURDY_AB  = 5;    // ability id for Sturdy
 
-// ---------------------------------------------------------------------------
-// HP-dependent move IDs (base power varies with HP; scope out wave 0).
-// Source: core_leaf.cpp constants, damage.cpp compute_bp.
-// These are the moves whose EFFECTIVE bp at runtime differs from the table's
-// base_power field, making the table-based damage approach unsound.
-// ---------------------------------------------------------------------------
-
-static const int32_t HP_DEP_MOVES[] = {
-    284,  // Eruption
-    323,  // Water Spout
-    175,  // Flail
-    179,  // Reversal
-    360,  // Gyro Ball
-    486,  // Electro Ball
-    378,  // Wring Out
-    462,  // Crush Grip
-    49,   // Sonic Boom (fixed non-HP-table damage, same issue)
-    82,   // Dragon Rage
-    69,   // Seismic Toss
-    101,  // Night Shade
-    162,  // Super Fang
-    717,  // Nature's Madness
-    149,  // Psywave (RNG-dependent damage)
-    515,  // Final Gambit
-    283,  // Endeavor
-    68,   // Counter
-    243,  // Mirror Coat
-    368,  // Metal Burst
-    255,  // Spit Up
-    514,  // Retaliate (damage doubles if ally fainted)
-    500,  // Stored Power (boost-dependent)
-    681,  // Power Trip
-    386,  // Punishment
-    363,  // Natural Gift (item-dependent)
-    497,  // Echoed Voice
-    205,  // Rollout
-    301,  // Ice Ball
-    419,  // Avalanche / Assurance (damage-history dependent)
-    372,  // Assurance
-    279,  // Revenge
-    371,  // Payback
-    362,  // Brine
-    707,  // Stomping Tantrum
-    512,  // Acrobatics
-    755,  // Fishious Rend
-    754,  // Bolt Beak
-    804,  // Rising Voltage
-    265,  // Smelling Salts
-    358,  // Wake-Up Slap
-    506,  // Hex
-    263,  // Facade
-    474,  // Venoshock
-};
-static constexpr int N_HP_DEP_MOVES = 45;
-
-// ---------------------------------------------------------------------------
-// Binding/trapping move IDs (multi-turn chip; scope out).
-// Source: ai_shared.h TRAPPING_MOVES.
-// ---------------------------------------------------------------------------
-
-static const int32_t BINDING_MOVES[] = {
-    250,  // Whirlpool
-    83,   // Fire Spin
-    328,  // Sand Tomb
-    463,  // Magma Storm
-    611,  // Infestation
-    128,  // Clamp
-    35,   // Wrap
-    20,   // Bind
-};
-static constexpr int N_BINDING_MOVES = 8;
+// HP-dependent and binding move lists + check_move_scope live in solver/move_scope.h
+// (shared with the bucket concede detectors). This file uses is_hp_dep_move() / the
+// shared check_move_scope() below.
 
 // Charge-turn (two-turn) move IDs.
 static const int32_t CHARGE_MOVES[] = {
@@ -167,110 +99,13 @@ static int move_count(const PokemonState& mon) {
     return n;
 }
 
-static bool in_list(const int32_t* arr, int n, int32_t val) {
-    for (int i = 0; i < n; ++i) if (arr[i] == val) return true;
-    return false;
-}
-
 // Look up MoveData via binary search (MOVE_TABLE may have gaps in move_id space).
 static const MoveData* get_md(int32_t move_id) {
     if (move_id <= 0) return nullptr;
     return ai_move_data_get(move_id);
 }
 
-// ---------------------------------------------------------------------------
-// Scope gate: check a single move for wave-0 violations.
-// Returns accumulated scope bits for that move.
-// ---------------------------------------------------------------------------
-
-static uint32_t check_move_scope(int32_t move_id) {
-    uint32_t bits = 0;
-
-    if (move_id <= 0) return 0;  // no move — not a violation
-
-    const MoveData* md = get_md(move_id);
-    if (!md) {
-        // Unknown move ID → conservative scope out via HP_DEP_BP bit as a catch-all.
-        bits |= SCOPE_HP_DEP_BP;
-        return bits;
-    }
-
-    // Multi-hit: max_hits > 1.
-    if (md->max_hits > 1)
-        bits |= SCOPE_MULTI_HIT;
-
-    // Accuracy < 100 (and not always-hit, which is accuracy == -1).
-    if (md->accuracy >= 0 && md->accuracy < 100)
-        bits |= SCOPE_ACCURACY_LT100;
-
-    // Recoil: recoil_num >= 0 means the move has recoil.
-    if (md->recoil_num >= 0)
-        bits |= SCOPE_RECOIL;
-
-    // Drain: drain_num >= 0 means the move drains.
-    if (md->drain_num >= 0)
-        bits |= SCOPE_DRAIN;
-
-    // Non-zero priority.
-    if (md->priority != 0)
-        bits |= SCOPE_PRIORITY;
-
-    // HP-dependent base power: explicit list of known HP-dep move IDs.
-    if (in_list(HP_DEP_MOVES, N_HP_DEP_MOVES, move_id))
-        bits |= SCOPE_HP_DEP_BP;
-
-    // Binding/trapping moves.
-    if (in_list(BINDING_MOVES, N_BINDING_MOVES, move_id))
-        bits |= SCOPE_BINDING;
-
-    // Secondary effect: scope out if the move has a non-trivial secondary
-    // (status, flinch, volatile, or stat change on the TARGET).
-    // Self-stat changes are fine (e.g. charge beam self +SpA) — those just
-    // affect the attacker's future damage tables.
-    // But any secondary targeting the opponent introduces branching.
-    const SecondaryEffect& sec = md->secondary;
-    bool has_opp_secondary = false;
-    if (sec.chance > 0) {
-        // Status on target.
-        if (sec.has_status) has_opp_secondary = true;
-        // Flinch on target.
-        if (sec.flinch) has_opp_secondary = true;
-        // Confusion on target.
-        if (sec.volatile_confused > 0) has_opp_secondary = true;
-        // Stat change on target (self_flag == 0 means the change applies to target).
-        for (int i = 0; i < sec.num_stat_changes; ++i) {
-            if (sec.stat_changes[i].self_flag == 0) {
-                has_opp_secondary = true;
-                break;
-            }
-        }
-    }
-    // Also check secondary2.
-    if (!has_opp_secondary) {
-        const SecondaryEffect& sec2 = md->secondary2;
-        if (sec2.chance > 0) {
-            if (sec2.has_status || sec2.flinch || sec2.volatile_confused > 0)
-                has_opp_secondary = true;
-            for (int i = 0; i < sec2.num_stat_changes && !has_opp_secondary; ++i)
-                if (sec2.stat_changes[i].self_flag == 0) has_opp_secondary = true;
-        }
-    }
-    if (has_opp_secondary)
-        bits |= SCOPE_SECONDARY;
-
-    // STATUS category move (zero BP) is out of scope as a damaging move.
-    // The scope gate is checking EACH slot; a status move on either side
-    // means that side has a non-damaging option (already handled in the
-    // main scope gate via opponent stall check). For the player, a status
-    // move alongside damaging moves means the greedy candidate selection
-    // may behave differently, but wave 0 scopes this: it is implicitly
-    // handled because we pick the player's best move by greedy argmin-kills.
-    // However, we do NOT scope out for status moves in the player moveset
-    // here — the outer logic handles that (the player choosing a damaging
-    // move is always legal). We only scope for specific mechanical issues.
-
-    return bits;
-}
+// check_move_scope / is_hp_dep_move now live in solver/move_scope.h (shared).
 
 // ---------------------------------------------------------------------------
 // Scope gate: full matchup check.
@@ -352,7 +187,7 @@ static uint32_t full_scope_check(const BattleState& state, const Question& q) {
         if (static_cast<int>(md->category) == 2) continue;
         // base_power == 0: skip (HP-dep or fixed-dmg; already scoped out but also
         // not "damaging" in the simple sense for the stall check).
-        if (md->base_power == 0 && !in_list(HP_DEP_MOVES, N_HP_DEP_MOVES, mid)) continue;
+        if (md->base_power == 0 && !is_hp_dep_move(mid)) continue;
 
         // Query the damage table to check immunity.
         ExecAction act{};
