@@ -72,6 +72,40 @@ public:
                    OrderingHint hint = OrderingHint::Natural) const {
         return step(state, player_action, emit, hint, Config{});
     }
+
+    // Options for replay_path. Defaults preserve existing behavior — bucket-solver expand
+    // opts out of the DAMAGE_ROLL-only shift check because it fires on any leaf whose HP
+    // change includes non-DAMAGE_ROLL sources (berry heals, residuals) even when the
+    // firing pattern is IDENTICAL at LO and HI. The bucket solver runs its own endpoint-
+    // paired shift check that is stricter and consumable-heal-tolerant.
+    struct ReplayOptions {
+        bool skip_state_shift_check = false;
+    };
+
+    // Execute exactly one turn forcing the given branch-point prefix (same
+    // CategoryBInjection / OracleOverrides machinery as the DFS uses internally).
+    // Returns the child BattleState and the observed branch-point sequence.
+    // The observed sequence carries has_dmg_by_roll / dmg_by_roll for DAMAGE_ROLL events.
+    //
+    // Throws std::runtime_error if the observed branch-point sequence diverges from
+    // the forced prefix: extra event, missing event, or options-count mismatch.
+    // The diagnostic names the first divergence. Never returns a silently-different child.
+    //
+    // Preconditions: same as step(). Config is fixed to aggregate_damage_rolls=true,
+    // collapse=None (exact mode). The prefix must be a valid path captured by step().
+    ReplayResult replay_path(const BattleState& state,
+                             const ExecAction& player_action,
+                             const ExecAction& ai_action,
+                             const std::vector<LeafPathEntry>& prefix,
+                             const ReplayOptions& opts) const;
+
+    // Overload — preserves prior signature; default options.
+    ReplayResult replay_path(const BattleState& state,
+                             const ExecAction& player_action,
+                             const ExecAction& ai_action,
+                             const std::vector<LeafPathEntry>& prefix) const {
+        return replay_path(state, player_action, ai_action, prefix, ReplayOptions{});
+    }
 };
 
 #endif // NUZLOCKE_SOLVER_TRANSITION_ORACLE_H

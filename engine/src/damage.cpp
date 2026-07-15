@@ -1676,8 +1676,18 @@ int32_t cpp_calculate_damage(
     if (roll_index >= 0) {
         roll_int = roll_index;
     } else {
+        // Populate ctx so the DAMAGE_ROLL log entry carries participant sides —
+        // required by TransitionOracle::replay_path's shift-property attribution.
+        const int atk_side_idx_dr = (def_side_idx == 0) ? 1 : 0;
+        const SideState& atk_ss_dr = (atk_side_idx_dr == 0) ? state.side0 : state.side1;
+        const SideState& def_ss_dr = (def_side_idx == 0)    ? state.side0 : state.side1;
+        const RngLogCtx dr_ctx{
+            RngParticipants{
+                (int8_t)atk_side_idx_dr, (int8_t)atk_ss_dr.active_indices[0],
+                (int8_t)def_side_idx,    (int8_t)def_ss_dr.active_indices[0]},
+            state.turn_number};
         roll_int = rng_resolve_damage_roll(atk_luck.random_mode, atk_luck.rng,
-                                           atk_luck.damage_roll);
+                                           atk_luck.damage_roll, &dr_ctx);
         // Annotate the just-logged DAMAGE_ROLL entry with all 16 final damages.
         // This consumes NO RNG: apply_roll_and_modifiers is purely deterministic.
         // Only done when the log is active (solver mode) AND it is the main 16-outcome site.

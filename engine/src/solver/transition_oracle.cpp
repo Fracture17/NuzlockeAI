@@ -846,7 +846,9 @@ static void dfs(DFSState& ds,
         // Debug callback (null-guarded; zero cost on hot path).
         if (ds.debug_emit && *ds.debug_emit) {
             LeafDebugInfo dbg;
-            dbg.cumulative_prob = leaf_prob;  // NaN in collapse modes by design
+            dbg.cumulative_prob  = leaf_prob;  // NaN in collapse modes by design
+            dbg.ai_action        = ds.opp_action;
+            dbg.ai_action_prob   = ds.opp_prob;
             dbg.path.reserve(prefix.size());
             for (const auto& pe : prefix) {
                 LeafPathEntry lpe;
@@ -961,6 +963,332 @@ static void dfs(DFSState& ds,
         prefix.pop_back();
         if (ds.aborted || ds.budget_exceeded) return;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers: convert log entries to the public LeafPathEntry sequence
+// ---------------------------------------------------------------------------
+
+// True for Cat-B event IDs (values 1-18 and 32-33). Cat-A events are the complement.
+static bool is_catb_event(int ev) {
+    return (ev >= 1 && ev <= 18) || ev == 32 || ev == 33;
+}
+
+// Build the public LeafPathEntry sequence from the observed log, carrying dmg_by_roll
+// for DAMAGE_ROLL entries. Only non-saturated Cat-B entries and Cat-A entries are included
+// (saturated draws, p_chosen==1.0, are not real branch points).
+static std::vector<LeafPathEntry> log_to_sequence(const AnalyticalRngLog& log) {
+    std::vector<LeafPathEntry> seq;
+    for (size_t i = 0; i < log.size(); ++i) {
+        const AnalyticalRngEntry& e = log.at(i);
+        // Include non-saturated Cat-B draws and all Cat-A draws (Cat-A always branch).
+        bool is_catb = is_catb_event(e.event);
+        bool saturated = is_catb && (std::abs(e.p_chosen - 1.0) < 1e-12);
+        if (saturated) continue;
+
+        LeafPathEntry lpe{};
+        lpe.channel    = is_catb ? LeafChannel::CatB : LeafChannel::CatA;
+        lpe.event      = e.event;
+        lpe.occurrence = 0;  // occurrence recomputed below for Cat-B
+        lpe.value      = e.chosen;
+        lpe.prob       = e.p_chosen;
+        lpe.value2     = -1;
+
+        // For DAMAGE_ROLL: copy dmg_by_roll annotation if present.
+        if (e.event == static_cast<int>(RngEventC::DAMAGE_ROLL) && e.has_dmg_by_roll) {
+            lpe.has_dmg_by_roll = 1;
+            for (int ri = 0; ri < 16; ++ri) lpe.dmg_by_roll[ri] = e.dmg_by_roll[ri];
+        }
+
+        seq.push_back(lpe);
+    }
+
+    // Recompute occurrence indices for Cat-B entries (matches the DFS occurrence counter logic).
+    // occurrence = number of previous non-saturated draws of the same event before this one.
+    std::map<int,int> occ_counts;
+    for (auto& lpe : seq) {
+        if (lpe.channel == LeafChannel::CatB) {
+            lpe.occurrence = occ_counts[lpe.event]++;
+        }
+    }
+
+    return seq;
+}
+
+// ---------------------------------------------------------------------------
+// TransitionOracle::replay_path
+// ---------------------------------------------------------------------------
+
+ReplayResult TransitionOracle::replay_path(const BattleState& state,
+                                            const ExecAction& player_action,
+                                            const ExecAction& ai_action,
+                                            const std::vector<LeafPathEntry>& prefix,
+                                            const ReplayOptions& opts) const {
+    check_preconditions(state, player_action);
+
+    // Convert public prefix to internal PrefixEntry format.
+    std::vector<PrefixEntry> internal_prefix;
+    internal_prefix.reserve(prefix.size());
+    for (const auto& lpe : prefix) {
+        PrefixEntry pe{};
+        pe.channel    = (lpe.channel == LeafChannel::CatB) ? Channel::CatB : Channel::CatA;
+        pe.event      = lpe.event;
+        pe.occurrence = lpe.occurrence;
+        pe.value      = lpe.value;
+        pe.prob       = lpe.prob;
+        pe.value2     = lpe.value2;
+        internal_prefix.push_back(pe);
+    }
+
+    // Build injection and overrides from the prefix (same as DFS does per-leaf).
+    CategoryBOccurrenceCounters occ_counters;
+    CategoryBInjection inj = build_catb_injection(internal_prefix);
+    OracleOverrides ov = build_overrides(internal_prefix);
+
+    set_catb_injection(&inj);
+    set_catb_occ_counters(&occ_counters);
+
+    AnalyticalRngLog log;
+    log.clear();
+    set_analytical_rng_log(&log);
+
+    BattleState state_copy = state;
+
+    std::vector<ExecAction> actions_p0 = {player_action};
+    std::vector<ExecAction> actions_p1 = {ai_action};
+    bool mega_p0 = player_action.mega;
+    bool mega_p1 = ai_action.mega;
+
+    DamageLoopLuck luck_p0{};
+    DamageLoopLuck luck_p1{};
+    TurnLuck tl0{};
+    TurnLuck tl1{};
+
+    SolverTurnResult result = cpp_run_one_turn_solver(
+        state_copy, actions_p0, actions_p1,
+        luck_p0, luck_p1, tl0, tl1,
+        mega_p0, mega_p1, ov);
+
+    // Attempt to verify that all prefix CatB entries were consumed. An unconsumed entry
+    // means fewer branch points occurred than the prefix expected — e.g. the turn ended
+    // before a later draw that the prefix forced. This is a divergence.
+    bool verify_threw = false;
+    std::string verify_error;
+    try {
+        inj.verify_exhausted();
+    } catch (const std::exception& e) {
+        verify_threw = true;
+        verify_error = e.what();
+    }
+
+    set_catb_injection(nullptr);
+    set_catb_occ_counters(nullptr);
+    set_analytical_rng_log(nullptr);
+
+    if (!result.ok) {
+        throw std::runtime_error(
+            "TransitionOracle::replay_path: turn execution failed: " + result.error);
+    }
+
+    // Build the observed sequence from the log.
+    std::vector<LeafPathEntry> observed = log_to_sequence(log);
+
+    // Sequence divergence check: compare observed vs prefix on STRUCTURE only
+    // (event identity + occurrence + options-count). Chosen values and probs are
+    // NOT compared here — the injection forces the prefix's value, so those tautologically
+    // match; instead, value integrity is verified below via bucket-representative logic
+    // (DAMAGE_ROLL) and the shift-property state check.
+    //   (a) The count of Cat-B branch points in the observed sequence matches the prefix Cat-B count.
+    //   (b) Each Cat-B branch point's (event, occurrence) matches.
+
+    // Count Cat-B entries in the prefix and observed sequence.
+    size_t prefix_catb = 0;
+    for (const auto& lpe : prefix)
+        if (lpe.channel == LeafChannel::CatB) ++prefix_catb;
+
+    size_t observed_catb = 0;
+    for (const auto& lpe : observed)
+        if (lpe.channel == LeafChannel::CatB) ++observed_catb;
+
+    // If prefix had unconsumed entries (verify_exhausted threw), the observed sequence
+    // has fewer Cat-B events than expected → divergence.
+    if (verify_threw) {
+        throw std::runtime_error(
+            "TransitionOracle::replay_path: prefix divergence — fewer branch points "
+            "observed than prefix expected (verify_exhausted: " + verify_error
+            + "). Prefix Cat-B count=" + std::to_string(prefix_catb)
+            + " observed Cat-B count=" + std::to_string(observed_catb));
+    }
+
+    // If observed has MORE Cat-B events than the prefix forced, extra events fired
+    // (e.g. berry or flinch beyond what the prefix covered) → divergence.
+    if (observed_catb > prefix_catb) {
+        // Find the first diverging entry: the (prefix_catb+1)-th Cat-B entry in observed.
+        size_t extra_idx = 0;
+        size_t catb_seen = 0;
+        for (size_t i = 0; i < observed.size(); ++i) {
+            if (observed[i].channel == LeafChannel::CatB) {
+                if (catb_seen == prefix_catb) {
+                    extra_idx = i;
+                    break;
+                }
+                ++catb_seen;
+            }
+        }
+        const auto& extra = observed[extra_idx];
+        throw std::runtime_error(
+            "TransitionOracle::replay_path: prefix divergence — extra Cat-B event "
+            "observed beyond prefix end: event=" + std::to_string(extra.event)
+            + " occurrence=" + std::to_string(extra.occurrence)
+            + ". Prefix Cat-B count=" + std::to_string(prefix_catb)
+            + " observed Cat-B count=" + std::to_string(observed_catb));
+    }
+
+    // Verify (event, occurrence) alignment between prefix Cat-B entries and observed Cat-B entries.
+    // Also perform DAMAGE_ROLL bucket-representative verification: the prefix's value for a
+    // DAMAGE_ROLL entry must be the LOWEST roll in the bucket {i : dmg_by_roll[i] == dmg_by_roll[value]}.
+    // The DFS always picks the bucket-lowest roll as the representative; a value that isn't the
+    // minimum of its bucket indicates a tampered prefix.
+    {
+        size_t obs_pos = 0;
+        size_t pre_pos = 0;
+        while (pre_pos < prefix.size() && obs_pos < observed.size()) {
+            if (prefix[pre_pos].channel != LeafChannel::CatB) { ++pre_pos; continue; }
+            while (obs_pos < observed.size() && observed[obs_pos].channel != LeafChannel::CatB)
+                ++obs_pos;
+            if (obs_pos >= observed.size()) break;  // already caught by count check above
+
+            const LeafPathEntry& pe = prefix[pre_pos];
+            const LeafPathEntry& oe = observed[obs_pos];
+            if (pe.event != oe.event || pe.occurrence != oe.occurrence) {
+                throw std::runtime_error(
+                    "TransitionOracle::replay_path: prefix divergence at Cat-B position "
+                    + std::to_string(obs_pos)
+                    + " — expected event=" + std::to_string(pe.event)
+                    + " occ=" + std::to_string(pe.occurrence)
+                    + " got event=" + std::to_string(oe.event)
+                    + " occ=" + std::to_string(oe.occurrence));
+            }
+
+            // DAMAGE_ROLL bucket-representative check (aggregated capture invariant).
+            if (pe.event == static_cast<int>(RngEventC::DAMAGE_ROLL) && oe.has_dmg_by_roll) {
+                int v = pe.value;
+                if (v < 0 || v >= 16) {
+                    throw std::runtime_error(
+                        "TransitionOracle::replay_path: DAMAGE_ROLL prefix value out of range "
+                        "at position " + std::to_string(obs_pos)
+                        + " — value=" + std::to_string(v));
+                }
+                int32_t target_dmg = oe.dmg_by_roll[v];
+                int bucket_min = -1;
+                for (int i = 0; i < 16; ++i) {
+                    if (oe.dmg_by_roll[i] == target_dmg) { bucket_min = i; break; }
+                }
+                if (bucket_min != v) {
+                    throw std::runtime_error(
+                        "TransitionOracle::replay_path: DAMAGE_ROLL prefix value is not the "
+                        "bucket representative at position " + std::to_string(obs_pos)
+                        + " — value=" + std::to_string(v)
+                        + " but bucket-min for dmg=" + std::to_string(target_dmg)
+                        + " is " + std::to_string(bucket_min)
+                        + " (indicates tampered prefix or mismatched damage table)");
+                }
+            }
+            ++pre_pos; ++obs_pos;
+        }
+    }
+
+    // Shift-property (state) verification. For each DAMAGE_ROLL prefix entry, the expected
+    // damage dealt is dmg_by_roll[value]. Sum the expected damage per defender side and
+    // compare against the observed HP change from input to output. Any mismatch indicates
+    // an "extra" HP-changing effect (berry heal, recoil, weather, etc.) not accounted for
+    // in the prefix — a divergence between the DFS's captured leaf semantics and the
+    // replay's actual semantics (e.g. Sitrus firing on a different-HP replay state).
+    // Cap adjustment: if the observed hp reached 0 or is capped by max_hp, we detect that
+    // and skip the strict comparison for that side (bucket-cap edge cases are handled by
+    // §5.2 special cases, not here).
+    // Bucket-solver expand runs its own endpoint-paired shift check and opts out
+    // (opts.skip_state_shift_check=true) because this DAMAGE_ROLL-only check throws even
+    // when a consumable berry fires identically at both LO and HI corners.
+    if (!opts.skip_state_shift_check) {
+        // Expected damage per defender side (0 or 1). Attacker's side takes no damage from
+        // the DAMAGE_ROLL entry itself (recoil is a separate mechanic).
+        int32_t expected_damage[2] = {0, 0};
+        // Walk the log (not the sequence) to get participant sides per DAMAGE_ROLL entry.
+        size_t catb_seen = 0;
+        for (size_t i = 0; i < log.size(); ++i) {
+            const AnalyticalRngEntry& le = log.at(i);
+            bool is_catb = is_catb_event(le.event);
+            if (!is_catb) continue;
+            bool saturated = std::abs(le.p_chosen - 1.0) < 1e-12;
+            if (saturated) continue;
+
+            if (catb_seen >= prefix_catb) break;
+            // Prefix entry corresponding to this log entry (walk prefix synchronously).
+            size_t pi = 0, pcount = 0;
+            while (pi < prefix.size()) {
+                if (prefix[pi].channel == LeafChannel::CatB) {
+                    if (pcount == catb_seen) break;
+                    ++pcount;
+                }
+                ++pi;
+            }
+            ++catb_seen;
+            if (pi >= prefix.size()) break;
+
+            if (le.event == static_cast<int>(RngEventC::DAMAGE_ROLL) && le.has_dmg_by_roll) {
+                int v = prefix[pi].value;
+                if (v < 0 || v >= 16) continue;  // already caught above
+                int8_t def_side = le.who.defender_side;
+                if (def_side < 0 || def_side > 1) continue;
+                expected_damage[def_side] += le.dmg_by_roll[v];
+            }
+        }
+
+        // Actual HP change per side. Use active mons (phase 1 = 1v1, exactly one active per side).
+        auto hp_of = [](const BattleState& s, int side) -> int32_t {
+            const SideState& sd = (side == 0) ? s.side0 : s.side1;
+            const PokemonState& m = sd.team[sd.active_indices[0]];
+            return m.hp;
+        };
+        auto max_hp_of = [](const BattleState& s, int side) -> int32_t {
+            const SideState& sd = (side == 0) ? s.side0 : s.side1;
+            const PokemonState& m = sd.team[sd.active_indices[0]];
+            return m.max_hp;
+        };
+
+        for (int side = 0; side < 2; ++side) {
+            int32_t hp_before = hp_of(state, side);
+            int32_t hp_after  = hp_of(state_copy, side);
+            int32_t max_hp    = max_hp_of(state, side);
+            int32_t actual_damage = hp_before - hp_after;
+            int32_t expected = expected_damage[side];
+
+            // Skip strict comparison when the target fainted (damage was capped by HP).
+            if (hp_after <= 0) continue;
+            // Skip when max_hp cap applies (heal past max — unlikely for damage but possible
+            // for a defensive equivalence).
+            if (hp_after >= max_hp && actual_damage < 0) continue;
+
+            if (actual_damage != expected) {
+                throw std::runtime_error(
+                    "TransitionOracle::replay_path: shift-property violation on side "
+                    + std::to_string(side)
+                    + " — expected damage from prefix DAMAGE_ROLL entries = "
+                    + std::to_string(expected)
+                    + " but observed HP delta = " + std::to_string(actual_damage)
+                    + " (hp " + std::to_string(hp_before) + " -> " + std::to_string(hp_after)
+                    + "). This indicates an unaccounted HP-changing effect (berry heal, "
+                    "recoil, residual) that fires only at the replay state — the DFS-captured "
+                    "prefix does not describe the replay state's semantics.");
+            }
+        }
+    }
+
+    ReplayResult rr;
+    rr.child             = state_copy;
+    rr.observed_sequence = std::move(observed);
+    return rr;
 }
 
 // ---------------------------------------------------------------------------

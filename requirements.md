@@ -2188,3 +2188,94 @@ file = "engine/src/solver/"
 confidence = "requirement"
 rationale = "USER 2026-07-14: pivot to a new user-designed solver (bsolver-like, faster; keeps oracle, MatchupGen, audits, pessimal pruning). Analytic likely retired; Phase 2 Task 7 PAUSED at wave-1 (SOLVER_PHASE2_STATE.md). Old-code disposition decided after."
 updated = "2026-07-14T17:43:44.699Z"
+
+[[record]]
+name = "overkill_coupling_throw"
+file = "engine/src/solver/bucket/"
+confidence = "requirement"
+rationale = "Overkill cross-axis coupling (drain/recoil/Shell Bell/Leech Seed/Innards Out scale with min(dmg,hp)): THROW for now (USER 2026-07-15, supersedes plan amendment 20b concede-tag). Promote to concede tag only if Task 10 rcheck throw census is noisy."
+updated = "2026-07-15T17:17:38.343Z"
+
+[[record]]
+name = "fixed_damage_supported"
+file = "engine/src/solver/bucket/"
+confidence = "requirement"
+rationale = "Fixed-damage moves (Seismic Toss/Night Shade/Dragon Rage/Sonic Boom/Psywave) are SUPPORTED, not 5.2 concessions (USER 2026-07-15): HP-independent, cannot crit; ordinary derived splits handle them. They stay on the Task 1 crit-audit allowlist."
+updated = "2026-07-15T17:17:47.450Z"
+
+[[record]]
+name = "gluttony_full_impl_task8"
+file = "engine/src/solver/bucket/"
+confidence = "requirement"
+rationale = "Gluttony: implement FULLY in Task 8, no hacks (USER 2026-07-15) - extend hp_thresholds() with ability-conditional denominator (/2) plus the Custap action-order site (core_leaf.cpp:726). Silently delegating to quarter-only hp_thresholds is unsound."
+updated = "2026-07-15T17:17:48.838Z"
+
+[[record]]
+name = "substitute_axis_postponed"
+file = "engine/src/solver/bucket/"
+confidence = "requirement"
+rationale = "Substitute: prototype concedes (tag on VOLATILE_SUBSTITUTE); long-run design is a TRUE THIRD interval axis (USER 2026-07-15) - post-Sub healing extends space by max_hp/4. Player CAN use Substitute (niche but real); postponed, not dropped."
+updated = "2026-07-15T17:18:05.423Z"
+
+[[record]]
+name = "stunlock_concede_player_only"
+file = "engine/src/solver/bucket/"
+confidence = "requirement"
+rationale = "5.1 stunlock/confusion concession is PLAYER-side only (USER 2026-07-15). Opponent confusion self-hits are adversarial AND-branches (they only help the certificate) and must NOT be conceded."
+updated = "2026-07-15T17:18:18.713Z"
+
+[[record]]
+name = "destiny_bond_direct_faint"
+file = "engine/src/move_exec_damage.cpp"
+confidence = "requirement"
+rationale = "Destiny Bond drag-down must faint the attacker DIRECTLY - survival mechanics (Endure/Focus Band/Sash/Sturdy) must NOT apply (USER 2026-07-15, Task R2). Do not route through cpp_apply_damage survival checks."
+updated = "2026-07-15T17:18:29.108Z"
+
+[[record]]
+name = "explosion_always_self_faint"
+file = "engine/src/post_hit.cpp"
+confidence = "requirement"
+rationale = "Explosion/Self-Destruct family must self-faint even on miss/Protect/zero damage (USER 2026-07-15, Task R2). No damage>0 gate on the self-faint."
+updated = "2026-07-15T17:18:30.303Z"
+
+[[record]]
+name = "curse_ghost_below_half"
+file = "engine/src/effects.cpp"
+confidence = "requirement"
+rationale = "Ghost Curse at/below half HP must still curse the target and SELF-FAINT the user (pays all remaining HP), not silently no-op (USER 2026-07-15, Task R2). Boundary at max_hp/2 stays a solver breakpoint."
+updated = "2026-07-15T17:18:37.046Z"
+
+[[record]]
+name = "memento_faint_iff_activates"
+file = "engine/src/effects.cpp"
+confidence = "requirement"
+rationale = "Memento faints the user iff the move ACTIVATES: no faint on miss/Protect/Substitute; still faints on Clear Body or -6 stages (USER 2026-07-15). Faint-first-then-drop order verified correct; guard-path gating verified in Task R2."
+updated = "2026-07-15T17:18:38.643Z"
+
+[[record]]
+name = "embargo_absent_from_engine"
+file = "engine/src/"
+confidence = "requirement"
+rationale = "Embargo exists in Run & Bun but is ABSENT from this engine (zero grep matches) - known gap, postponed (USER 2026-07-15). When ported it negates held-item effects (berries/Leftovers/Black Sludge/Life Orb); pure d-flag for the solver, no HP breakpoint."
+updated = "2026-07-15T17:18:45.185Z"
+
+[[record]]
+name = "expand_throw_never_bisect"
+file = "engine/src/solver/bucket/expand.cpp"
+confidence = "settled"
+rationale = "Expand THROWS staged ExpandError on any verification mismatch, NEVER auto-bisects (self-healing would mask under-splitting). Chip/heal kinks are derived splits at Expand time (single convention, USER item 7: fastest of the sound options)."
+updated = "2026-07-15T17:18:47.289Z"
+
+[[record]]
+name = "seed_zero_maxhp_unconditional"
+file = "engine/src/solver/bucket/breakpoints.cpp"
+confidence = "settled"
+rationale = "BreakpointRegistry::instantiate seeds {0, max_hp} UNCONDITIONALLY before hp_thresholds()+keepHp. This neutralizes hp_thresholds' cur_hp==max_hp gating on FullHp entries (inventory 11 item 2) - do not remove the seeding."
+updated = "2026-07-15T17:18:55.782Z"
+
+[[record]]
+name = "level_is_question_param"
+file = "engine/src/solver/bucket/"
+confidence = "requirement"
+rationale = "Player LEVEL is an input parameter of the Question (staying under level cap manipulates AI - viable tactic, USER amendment 20c). Level-up applies AFTER matchup end, BEFORE end-state check. EXP/level-up handling deferred to Solver C / 6v6 design."
+updated = "2026-07-15T17:18:57.703Z"

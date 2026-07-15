@@ -1585,7 +1585,10 @@ static void apply_interaction_move(BattleState& s, int side_idx, int32_t move,
 
         if (si.self_target && move == MOVE_REST) {
             // REST: full heal + sleep + is_rest_sleep.
+            // Fails at resolution time if already at full HP (mainline Emerald "but it failed";
+            // selection stays legal — PP still consumed upstream in cpp_execute_action).
             PokemonState& m = active_mon(s, side_idx);
+            if (m.hp >= m.max_hp) { m.last_move_failed = true; return; }
             m.hp = m.max_hp;
             m.status = STATUS_SLEEP;
             m.is_rest_sleep = true;

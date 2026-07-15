@@ -4,7 +4,7 @@
   "count": 2000,
   "shard_size": 1000,
   "max_turns": 500,
-  "git_commit": "d332f417f7977284168fb2ae258530e5f34b663c",
+  "git_commit": "ea1ce88522a13a4fb78a6378eeca7818e84fb3dc",
   "policy_scheme": "even=ai/ai, odd=random/random",
   "generator": "liveplay.battle_gen.make_random_battle"
 }
