@@ -4,6 +4,7 @@
 #include "damage.h"
 #include "rng_resolver.h"       // rng_resolve_crit
 #include "effects_internal.h"  // shared eff_internal::effective_weather
+#include "effects_consts.h"    // eff::EXPLOSION_MOVE_IDS
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -276,9 +277,6 @@ static const int32_t MEGA_ITEMS[] = {
     621, 622, 623, 625, 626, 627, 628, 629, 630
 };
 static constexpr int MEGA_COUNT = 46;
-
-// Explosion-type moves
-static const int32_t EXPLOSION_MOVES[] = {120, 153, 720, 802};  // EXPLOSION, SELF_DESTRUCT, MIND_BLOWN, MISTY_EXPLOSION
 
 // Moves that bypass defender ability-based damage modifiers
 static const int32_t IGNORE_ABILITY_MOVES[] = {713, 714, 722};  // SUNSTEEL_STRIKE, MOONGEIST_BEAM, PHOTON_GEYSER
@@ -1245,7 +1243,7 @@ static int32_t compute_defense_stat(
         def_val = static_cast<int32_t>(std::floor(def_val * 1.5));
 
     // Explosion/Self-Destruct: halve defender's Defense
-    if (in_set(EXPLOSION_MOVES, move_id))
+    if (in_set(eff::EXPLOSION_MOVE_IDS, move_id))
         def_val = std::max(1, def_val / 2);
 
     return def_val;

@@ -1490,20 +1490,27 @@ static bool apply_complex_interaction(BattleState& s, int side_idx, int32_t move
         return true;
     }
     if (move == MOVE_MEMENTO) {
-        PokemonState& target = active_mon(s, opp_idx);
-        if (target.stage0 <= -6 && target.stage2 <= -6) return true;  // memento_no_effect
+        // USER spec 2026-07-15 (Task R2 follow-up): the user faints whenever the move
+        // activates, INCLUDING when both stats are already at -6 (no early-fail).
         cpp_faint_active(s, side_idx, /*notify_soul_heart=*/false);
-        change_stat_stage(s, opp_idx, 0, -2, false, false, false);
-        change_stat_stage(s, opp_idx, 2, -2, false, false, false);
+        // USER spec 2026-07-15 (Task R2): drops are opponent-caused so Clear Body/White Smoke
+        // block them; faint still fires (faint-first-then-drop order).
+        change_stat_stage(s, opp_idx, 0, -2, /*caused_by_opponent=*/true, false, false);
+        change_stat_stage(s, opp_idx, 2, -2, /*caused_by_opponent=*/true, false, false);
         return true;
     }
     if (move == MOVE_CURSE) {
         PokemonState& mon = active_mon(s, side_idx);
         if (has_type(mon, TYPE_GHOST)) {
             int32_t cost = mon.max_hp / 2;
-            if (mon.hp <= cost) return true;
-            mon.hp -= cost;
+            // USER spec 2026-07-15 (Task R2): at/below half, still curse the defender and
+            // self-faint the user (pays all remaining HP). Above half: unchanged.
             active_mon(s, opp_idx).volatiles |= VOLATILE_CURSED;
+            if (mon.hp <= cost) {
+                cpp_faint_active(s, side_idx, /*notify_soul_heart=*/false);
+            } else {
+                mon.hp -= cost;
+            }
         } else {
             change_stat_stage(s, side_idx, 0, +1, false, false, false);
             change_stat_stage(s, side_idx, 1, +1, false, false, false);

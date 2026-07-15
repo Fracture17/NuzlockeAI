@@ -37,6 +37,11 @@ constexpr int32_t AB_INTIMIDATE = 22, AB_DRIZZLE = 2, AB_PRIMORDIAL_SEA = 189, A
 // Mold Breaker family (MOLD_BREAKER, TERAVOLT, TURBOBLAZE)
 constexpr int32_t MOLD_BREAKER_IDS[3] = {104, 163, 164};
 
+// Explosion/Self-Destruct family (EXPLOSION, SELF_DESTRUCT, MIND_BLOWN, MISTY_EXPLOSION).
+// Shared by damage.cpp (BP handling), post_hit.cpp (self-faint), move_exec_guards.cpp
+// (Damp gate + abort-path self-faint per USER spec 2026-07-15, Task R2).
+constexpr int32_t EXPLOSION_MOVE_IDS[4] = {120, 153, 720, 802};
+
 // --- Items ---
 constexpr int32_t ITEM_NONE = 0, ITEM_HEAVY_DUTY_BOOTS = 1120, ITEM_WHITE_HERB = 214,
     ITEM_EJECT_PACK = 1119, ITEM_ADRENALINE_ORB = 846, ITEM_DAMP_ROCK = 285,

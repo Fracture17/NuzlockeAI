@@ -244,11 +244,14 @@ void apply_defender_faint_effects(BattleState& state, int side_idx, int defender
                                   int32_t updated_def_volatiles, int32_t updated_def_ability,
                                   int32_t hp_before, const DamageLoopLuck& luck_atk) {
     (void)attacker_long_reach_at_call;
-    // Destiny Bond: drag the attacker (side_idx) down.
+    // Destiny Bond: drag the attacker (side_idx) down. USER spec 2026-07-15 (Task R2):
+    // the attacker faints DIRECTLY — Endure/Focus Band/Focus Sash/Sturdy must NOT save it.
+    // Route through cpp_faint_active (traps released, faint logged) rather than
+    // cpp_apply_damage, which would apply survival checks. No item consumption on this path
+    // (no damage event occurs, so Focus Sash is not spent).
     if (updated_def_volatiles & VOLATILE_DESTINY_BOND) {
-        MoveExecLuck mel = make_exec_luck(luck_atk.proc_threshold, luck_atk.random_mode, luck_atk.rng, luck_atk.overrides);
         PokemonState& atk = active_mon(state, side_idx);
-        cpp_apply_damage(state, side_idx, atk.max_hp, AB_NONE, mel, -1, -1, 0);
+        if (!atk.fainted) cpp_faint_active(state, side_idx, /*notify_soul_heart=*/false);
     }
     // Innards Out.
     if (updated_def_ability == AB_INNARDS_OUT) {

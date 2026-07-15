@@ -114,7 +114,6 @@ const int32_t BINDING_MOVES[] = {20, 35, 83, 128, 250, 328, 463, 611};
 const int32_t TRAP_DEFENDER_MOVES[] = {662, 677};
 const int32_t RECHARGE_MOVES[] = {63, 307, 308, 338, 416, 439, 794};
 const int32_t DEFROST_TARGET_MOVES[] = {221, 503, 682, 815};
-const int32_t EXPLOSION_MOVES[] = {120, 153, 720, 802};
 const int32_t CHOICE_ITEMS[] = {220, 287, 297};
 const int32_t MEGA_ITEMS[] = {40,41,573,575,576,577,578,579,580,582,583,584,585,586,587,588,589,
     590,591,592,594,596,598,599,602,605,607,608,612,613,614,615,616,617,618,619,620,621,622,623,
@@ -874,8 +873,10 @@ void cpp_apply_post_hit_effects(BattleState& s, const PostHitArgs& a,
             if (nh == 0) cpp_faint_active(s, si, /*notify_soul_heart=*/false);
         }
     }
-    // Explosion
-    if (in_set(EXPLOSION_MOVES, move) && damage > 0) {
+    // Explosion — USER spec 2026-07-15 (Task R2): self-faint whenever the move actually
+    // executed (miss/Protect self-faints are handled in the guard chain; the damage=0
+    // gate is removed so hitting Substitute for exactly sub_hp still self-faints).
+    if (in_set(EXPLOSION_MOVE_IDS, move)) {
         if (!active_mon(s, si).fainted) cpp_faint_active(s, si, /*notify_soul_heart=*/false);
     }
     // Rapid Spin / Mortal Spin

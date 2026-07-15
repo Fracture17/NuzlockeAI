@@ -122,6 +122,19 @@ constexpr int32_t AK_SWITCH = 1;
 const int32_t HJK_MOVES[] = {MV_HIGH_JUMP_KICK, MV_JUMP_KICK, MV_SUPERCELL_SLAM};
 const int32_t OHKO_MOVES[] = {MV_GUILLOTINE, MV_HORN_DRILL, MV_FISSURE, MV_SHEER_COLD};
 
+// Explosion/Self-Destruct family (eff::EXPLOSION_MOVE_IDS). Damp aborts BEFORE these
+// self-faint on miss/Protect; once past the Damp gate, USER spec 2026-07-15 (Task R2)
+// requires the user to self-faint on every abort path (miss, Protect, Wide/Quick Guard,
+// ability/item immunity, semi-invuln).
+bool is_explosion_move(int32_t m) {
+    for (int32_t e : EXPLOSION_MOVE_IDS) if (m == e) return true;
+    return false;
+}
+void explosion_self_faint_if_alive(BattleState& state, int side_idx) {
+    PokemonState& a = active_mon(state, side_idx);
+    if (!a.fainted) cpp_faint_active(state, side_idx, /*notify_soul_heart=*/false);
+}
+
 const double ACC_STAGE_MULT[13] = {
     3.0/9, 3.0/8, 3.0/7, 3.0/6, 3.0/5, 3.0/4, 1.0, 4.0/3, 5.0/3, 2.0/1, 7.0/3, 8.0/3, 3.0/1
 };
@@ -556,8 +569,7 @@ bool pdg_move_specific_fail_guards(BattleState& state, int side_idx, int defende
     PokemonState& attacker = active_mon(state, side_idx);
 
     // Damp blocks self-destruct moves.
-    static const int32_t EXPLOSION_MOVES[] = {153, 120, 802, 720};  // Explosion/SelfDestruct/MistyExpl/MindBlown
-    if (in_list(move, EXPLOSION_MOVES, 4) && !is_mold_breaker(attacker.ability)) {
+    if (is_explosion_move(move) && !is_mold_breaker(attacker.ability)) {
         for (int s = 0; s < 2; ++s) {
             SideState& side = side_at(state, s);
             for (int32_t ai : side.active_indices) {
@@ -755,15 +767,26 @@ bool pdg_accuracy_and_miss(BattleState& state, int side_idx, int defender_idx, i
     // Spit Up.
     if (move == MV_SPIT_UP) cpp_reset_stockpile(state, side_idx);
 
+    // Explosion family: USER spec 2026-07-15 (Task R2) — user self-faints even on miss.
+    if (is_explosion_move(move)) explosion_self_faint_if_alive(state, side_idx);
+
     return true;
 }
 
 // ===========================================================================
 // Phase 3: _pdg_priority_and_protection_guards. Returns true if aborted.
+// USER spec 2026-07-15 (Task R2): Explosion-family moves self-faint whenever this
+// phase (or any subsequent phase) aborts — Damp in phase 1 aborts BEFORE any faint,
+// but every other guard here counts as "move executed but blocked" → user faints.
 // ===========================================================================
 bool pdg_priority_and_protection_guards(BattleState& state, int side_idx, int defender_idx,
                                         int32_t move, const MoveData& md, ExecCtx& ctx) {
     PokemonState& attacker = active_mon(state, side_idx);
+    // Post-Damp self-faint hook: any abort past this point counts the move as executed.
+    auto abort_here = [&]() -> bool {
+        if (is_explosion_move(move)) explosion_self_faint_if_alive(state, side_idx);
+        return true;
+    };
 
     // Semi-invulnerability miss.
     {
@@ -779,7 +802,7 @@ bool pdg_priority_and_protection_guards(BattleState& state, int side_idx, int de
                 // Semi-invuln miss for damaging moves (Python core.py:2149).
                 rich_log_presence(state.turn_number, RICH_EV_MOVE_MISS, active_mon(state, side_idx).species);
                 active_mon(state, side_idx).last_move_failed = true;
-                return true;
+                return abort_here();
             }
 
         }
@@ -790,7 +813,7 @@ bool pdg_priority_and_protection_guards(BattleState& state, int side_idx, int de
     // Psychic Terrain.
     if (eff_priority > 0 && state.terrain == TERRAIN_PSYCHIC
             && eff_internal::is_grounded(active_mon(state, defender_idx), state)) {
-        return true;
+        return abort_here();
     }
 
     // Dazzling / Queenly Majesty / Armor Tail.
@@ -798,7 +821,7 @@ bool pdg_priority_and_protection_guards(BattleState& state, int side_idx, int de
         SideState& ds = side_at(state, defender_idx);
         for (int32_t ai : ds.active_indices) {
             int32_t ab = ds.team[ai].ability;
-            if (ab == AB_DAZZLING || ab == AB_QUEENLY_MAJESTY || ab == AB_ARMOR_TAIL) return true;
+            if (ab == AB_DAZZLING || ab == AB_QUEENLY_MAJESTY || ab == AB_ARMOR_TAIL) return abort_here();
         }
     }
 
@@ -821,7 +844,7 @@ bool pdg_priority_and_protection_guards(BattleState& state, int side_idx, int de
                 std::swap(ds.active_indices[0], ds.active_indices[slot_pos]);
                 change_stat_stage(state, defender_idx, 2, +1, false, false, false);
                 std::swap(ds.active_indices[0], ds.active_indices[slot_pos]);
-                return true;
+                return abort_here();
             }
         }
     }
@@ -832,7 +855,7 @@ bool pdg_priority_and_protection_guards(BattleState& state, int side_idx, int de
             bool unseen_fist_bypass = (attacker.ability == AB_UNSEEN_FIST
                                        && (md.tags & TAG_CONTACT));
             apply_protect_contact_penalty(state, side_idx, defender_idx, move, md, ctx);
-            if (!unseen_fist_bypass) return true;
+            if (!unseen_fist_bypass) return abort_here();
         } else {
             if (move == MV_FEINT) {
                 ctx.protected_sides[defender_idx] = false;
@@ -843,13 +866,13 @@ bool pdg_priority_and_protection_guards(BattleState& state, int side_idx, int de
     // Wide Guard.
     if (ctx.wide_guard_sides[defender_idx]
             && (md.target == TGT_ALL_ADJACENT_FOES || md.target == TGT_ALL_ADJACENT)) {
-        return true;
+        return abort_here();
     }
 
     // Quick Guard.
     if (ctx.quick_guard_sides[defender_idx]) {
         int32_t qg = md.priority + triage_priority_bump(active_mon(state, side_idx).ability, md);
-        if (qg > 0) return true;
+        if (qg > 0) return abort_here();
     }
 
     return false;
@@ -862,14 +885,19 @@ bool pdg_ability_item_immunity_guards(BattleState& state, int side_idx, int defe
                                       int32_t move, const MoveData& md) {
     const PokemonState& attacker = active_mon(state, side_idx);
     PokemonState& defender = active_mon(state, defender_idx);
+    // Post-Damp: any abort here counts the move as executed → Explosion self-faints.
+    auto abort_here = [&]() -> bool {
+        if (is_explosion_move(move)) explosion_self_faint_if_alive(state, side_idx);
+        return true;
+    };
 
     if ((md.tags & TAG_SOUND) && !is_mold_breaker(attacker.ability)
-            && defender.ability == AB_SOUNDPROOF) return true;
+            && defender.ability == AB_SOUNDPROOF) return abort_here();
     if ((md.tags & TAG_BULLET) && !is_mold_breaker(attacker.ability)
-            && defender.ability == AB_BULLETPROOF) return true;
-    if ((md.tags & TAG_POWDER) && defender.item == ITM_SAFETY_GOGGLES) return true;
+            && defender.ability == AB_BULLETPROOF) return abort_here();
+    if ((md.tags & TAG_POWDER) && defender.item == ITM_SAFETY_GOGGLES) return abort_here();
     if ((md.tags & TAG_POWDER) && defender.ability == AB_OVERCOAT
-            && !is_mold_breaker(attacker.ability)) return true;
+            && !is_mold_breaker(attacker.ability)) return abort_here();
 
     if (defender.ability == AB_ICE_FACE && defender.species == SP_EISCUE
             && md.category == CAT_PHYSICAL && !is_mold_breaker(attacker.ability)) {
@@ -878,7 +906,7 @@ bool pdg_ability_item_immunity_guards(BattleState& state, int side_idx, int defe
         rich_log_damage(state.turn_number, defender.species, 0, defender.hp,
                         RICH_UNSET, RICH_UNSET, defender_idx, SourceTag::ABILITY);
         apply_form_change(state, defender_idx, SP_EISCUE_NOICE);
-        return true;
+        return abort_here();
     }
     return false;
 }
@@ -890,6 +918,11 @@ bool pdg_resolve_move_type(BattleState& state, int side_idx, int defender_idx, i
                            const MoveData& md, int32_t& move_type) {
     PokemonState& attacker = active_mon(state, side_idx);
     move_type = md.move_type;
+    // Post-Damp: any abort here counts the move as executed → Explosion self-faints.
+    auto abort_here = [&]() -> bool {
+        if (is_explosion_move(move)) explosion_self_faint_if_alive(state, side_idx);
+        return true;
+    };
 
     if (move == MV_HIDDEN_POWER) move_type = hidden_power_type(attacker);
     // Natural Gift: type is determined by the held berry (mirrors Python core.py:2258-2259).
@@ -917,10 +950,10 @@ bool pdg_resolve_move_type(BattleState& state, int side_idx, int defender_idx, i
         else if (state.weather == WEATHER_HAIL) move_type = TYPE_ICE;
     }
 
-    if (state.weather == WEATHER_HEAVY_RAIN && move_type == TYPE_FIRE) return true;
-    if (state.weather == WEATHER_HARSH_SUN && move_type == TYPE_WATER) return true;
+    if (state.weather == WEATHER_HEAVY_RAIN && move_type == TYPE_FIRE) return abort_here();
+    if (state.weather == WEATHER_HARSH_SUN && move_type == TYPE_WATER) return abort_here();
 
-    if (check_type_immunity(state, side_idx, move_type, move)) return true;
+    if (check_type_immunity(state, side_idx, move_type, move)) return abort_here();
 
     PokemonState& defender = active_mon(state, defender_idx);
     if (defender.ability == AB_WONDER_GUARD) {
@@ -928,7 +961,7 @@ bool pdg_resolve_move_type(BattleState& state, int side_idx, int defender_idx, i
             double eff = 1.0;
             if (defender.has_types)
                 for (int32_t t : defender.types) eff *= cpp_type_effectiveness(move_type, t);
-            if (eff > 0.0 && eff <= 1.0) return true;
+            if (eff > 0.0 && eff <= 1.0) return abort_here();
         }
     }
 
