@@ -74,8 +74,45 @@ public:
     // Instantiate the BpSet for a concrete matchup + question. THROWS
     // std::runtime_error if hp_thresholds() reports residual_unknown on either side —
     // a deliberate difference from analytic UNKNOWN-routing (fail loud; later audits
-    // absorb the throw census).
+    // absorb the throw census). Also throws (via registry_static_entries) on any
+    // form-changing ability (Power Construct/Schooling/Shields Down/Zen Mode/Gulp
+    // Missile) — those mechanics are postponed (Task 8 §4).
     BpSet instantiate(const BattleState& state, const Question& q) const;
 };
+
+// Kind tag for a registry_static_entries() breakpoint — identifies the SOURCE
+// mechanic (SOLVER_BREAKPOINT_INVENTORY.md §4/§5/§6/§9), not a computed value.
+// HalfCrossing:    Berserk/Emergency Exit/Wimp Out, own axis, max_hp/2.
+// PinchThird:      Blaze/Torrent/Overgrow/Swarm, own axis, max_hp/3.
+// DefeatistHalf:   Defeatist, own axis, max_hp/2.
+// BrineHalf:       Brine known by the OTHER side, this axis, max_hp/2.
+// SubCostQuarter:  Substitute known, own axis, max_hp/4.
+// CostHalf:        Belly Drum known, OR Curse known + Ghost-type user, own axis, max_hp/2.
+// HealCapKink:     recovery/heal moves and abilities, own axis, max_hp - heal_amount.
+// HazardKink:      Stealth Rock / Spikes, own axis, damage value itself (not max_hp-damage).
+enum class BpEntryKind {
+    HalfCrossing,
+    PinchThird,
+    DefeatistHalf,
+    BrineHalf,
+    SubCostQuarter,
+    CostHalf,
+    HealCapKink,
+    HazardKink,
+};
+
+struct BpEntry {
+    int32_t hp;
+    BpEntryKind kind;
+};
+
+// Per-mechanic static breakpoint entries for one axis (side). Reads BOTH actives —
+// cross-axis mechanics (Brine, Heal Pulse) key off the OTHER side's moveset but land
+// their breakpoint on THIS side's axis. THROWS std::runtime_error containing
+// "form-change" if the active mon on `side` holds a form-changing ability (Power
+// Construct/Schooling/Shields Down/Zen Mode/Gulp Missile) — those mechanics reshape
+// max_hp or stat lines mid-battle and are out of scope for Task 8 (postponed, not
+// dropped; see plan §4).
+std::vector<BpEntry> registry_static_entries(const BattleState& state, int side);
 
 #endif // NUZLOCKE_SOLVER_BUCKET_BREAKPOINTS_H

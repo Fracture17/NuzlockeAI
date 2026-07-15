@@ -18,6 +18,7 @@
 
 #include "ai_analytic.h"                 // cpp_compute_action_probabilities
 #include "core_leaf.h"                   // damage_table lives via engine_queries.h
+#include "effects_internal.h"            // is_berry (Cheek Pouch gate)
 #include "residuals.h"                   // residual constants referenced in comments
 
 #include <algorithm>
@@ -167,13 +168,52 @@ constexpr int32_t I_WIKI_BERRY     = 160;
 constexpr int32_t I_MAGO_BERRY     = 161;
 constexpr int32_t I_AGUAV_BERRY    = 162;
 constexpr int32_t I_IAPAPA_BERRY   = 163;
+constexpr int32_t I_STICKY_BARB    = 288;   // residuals.cpp:458 damage max(1, max/8)
+constexpr int32_t I_BINDING_BAND   = 544;   // residuals.cpp:510 bound divisor 6 vs 8
+constexpr int32_t I_BIG_ROOT       = 296;   // residuals.cpp:303 leech-seed heal *1.3
+constexpr int32_t I_ROCKY_HELMET   = 540;   // move_exec_helpers.cpp:174 recoil max(1, max/6)
+constexpr int32_t I_LIFE_ORB       = 270;   // post_hit.cpp:945 recoil max(1, max/10)
 
+// Statuses: canonical ids from effects_consts.h (STATUS_BURN=1 is DISTINCT from
+// STATUS_POISON=4 — a prior version of this file incorrectly aliased both to 4).
 constexpr int32_t STATUS_POISON = 4;
 constexpr int32_t STATUS_TOXIC  = 5;
-constexpr int32_t STATUS_BURN   = 4;   // NOTE mirror ai_shared: same as poison value?
-                                       // effects_consts.h uses STATUS_BURN separately.
-// core_leaf/effects use STATUS_BURN as distinct value — the analytic effect (max/16
-// for burn, max/8 for poison) is what matters; we conservatively include both.
+constexpr int32_t STATUS_BURN   = 1;
+constexpr int32_t STATUS_SLEEP  = 6;
+
+// Abilities referenced by §7/§8 rows below (residuals.cpp / move_exec_damage.cpp /
+// post_hit.cpp — see per-row comments for exact source line).
+constexpr int32_t AB_MAGIC_GUARD  = 98;
+constexpr int32_t AB_POISON_HEAL  = 90;    // residuals.cpp:318 heal max(1, max/8)
+constexpr int32_t AB_RAIN_DISH    = 44;    // residuals.cpp:131 heal max(1, max/16)
+constexpr int32_t AB_DRY_SKIN     = 87;    // residuals.cpp:137 heal/damage max(1, max/8)
+constexpr int32_t AB_SOLAR_POWER  = 94;    // residuals.cpp:152 damage max(1, max/8)
+constexpr int32_t AB_BAD_DREAMS   = 123;   // residuals.cpp:419 opp damage max(1, max/8)
+constexpr int32_t AB_RIPEN        = 247;   // effects.cpp: doubles HP-berry heals (not Berry Juice)
+constexpr int32_t AB_LIQUID_OOZE  = 64;    // residuals.cpp:296 flips leech-seed heal to damage
+constexpr int32_t AB_ROUGH_SKIN   = 24;    // move_exec_damage.cpp:78 opp recoil max(1, max/8)
+constexpr int32_t AB_IRON_BARBS   = 160;   // same formula as Rough Skin
+constexpr int32_t AB_AFTERMATH    = 106;   // move_exec_damage.cpp:279 opp dmg max_hp/4, NO floor
+
+constexpr int32_t VE_NIGHTMARE = 26;       // residuals.cpp:470 damage max(1, max/4)
+constexpr int32_t VE_BOUND     = 4;        // residuals.cpp:495 damage max(1, max/8 or max/6)
+constexpr int32_t VOL_CURSED        = 4;         // residuals.cpp:483 damage max(1, max/4)
+constexpr int32_t VOL_LEECH_SEEDED  = 2;         // residuals.cpp:273 drain max(1, max/8)
+
+constexpr int32_t WEATHER_SANDSTORM = 3;   // residuals.cpp:104 chip max(1, max/16)
+constexpr int32_t WEATHER_HAIL      = 4;   // residuals.cpp:114 chip max(1, max/16)
+constexpr int32_t WEATHER_SUNNY     = 1;
+constexpr int32_t WEATHER_RAINY     = 2;
+constexpr int32_t WEATHER_HARSH_SUN = 6;
+constexpr int32_t WEATHER_HEAVY_RAIN = 5;
+
+constexpr int32_t MOVE_HIGH_JUMP_KICK    = 136;  // move_exec_guards.cpp:695 crash max(1, max/2)
+constexpr int32_t MOVE_JUMP_KICK         = 26;
+constexpr int32_t MOVE_SUPERCELL_SLAM    = 916;
+constexpr int32_t MOVE_STEEL_BEAM        = 796;  // post_hit.cpp: self cost max(1, max/2)
+constexpr int32_t MOVE_SPIKY_SHIELD      = 596;  // move_exec_guards.cpp:335 attacker dmg max(1, max/8)
+
+constexpr int32_t AB_CHEEK_POUCH = 167;    // post_hit.cpp:233 self heal max(1, max/3) on berry eat
 
 const PokemonState& active_of(const BattleState& s, int side) {
     const SideState& ss = (side == 0) ? s.side0 : s.side1;
@@ -269,48 +309,156 @@ DamageTable effective_damage_table(const BattleState& s, int attacker_side,
 
 } // namespace
 
+namespace {
+bool residual_knows_move(const PokemonState& m, int32_t move_id) {
+    return m.move_id0 == move_id || m.move_id1 == move_id
+        || m.move_id2 == move_id || m.move_id3 == move_id;
+}
+bool residual_has_ve(const PokemonState& m, int32_t ve) {
+    for (const auto& tv : m.timed_volatiles) if (tv.effect == ve) return true;
+    return false;
+}
+} // namespace
+
 // Superset of one-turn HP-delta candidates for one side's active mon. Positive =
 // heal (image shift by +delta), negative = damage (image shift by -delta / opposite
 // convention downstream). Always includes 0. Missed sources produce over-splitting
 // (sound) or a gate throw, never unsoundness.
+//
+// Task 8 Step 3: every magnitude below is added with BOTH signs (item C.1) — this
+// makes trigger-direction bugs (e.g. Poison Heal reversing poison damage into a heal)
+// self-correcting without extra branching, since both signs are already candidates.
+// Secondary gating conditions (contact-only, type immunity, Safety Goggles, ...) are
+// DELIBERATELY not modeled here — omitting them only over-includes candidate deltas,
+// which is sound per the Expand contract; only under-inclusion would be unsound.
 std::vector<int32_t> residual_delta_candidates(const BattleState& state, int side) {
     const PokemonState& mon = active_of(state, side);
+    const PokemonState& opp = active_of(state, 1 - side);
+    const SideState& own_side = (side == 0) ? state.side0 : state.side1;
     int32_t max_hp = safe_max_hp(mon);
     std::set<int32_t> deltas = {0};
 
     if (max_hp <= 0) return {0};
 
     auto add = [&](int32_t d) { deltas.insert(d); };
+    auto add_both = [&](int32_t magnitude) { deltas.insert(magnitude); deltas.insert(-magnitude); };
 
-    // Burn: -max(1, max/16) (residuals.cpp:350).
-    if (mon.status == STATUS_BURN) add(-std::max(1, max_hp / 16));
-    // Poison: -max(1, max/8) (residuals.cpp:334).
-    if (mon.status == STATUS_POISON) add(-std::max(1, max_hp / 8));
-    // Toxic: -max(1, max*counter/16) (residuals.cpp:325). Enumerate counters 1..15.
+    bool ripen = mon.ability == AB_RIPEN;
+
+    // --- §7: own-axis residual chip/heal magnitudes ---
+
+    // Burn: max(1, max/16) (residuals.cpp:347-350).
+    if (mon.status == STATUS_BURN) add_both(std::max(1, max_hp / 16));
+    // Poison / Poison Heal: max(1, max/8) — both signs cover Poison Heal's reversed
+    // direction (residuals.cpp:316-338).
+    if (mon.status == STATUS_POISON || mon.status == STATUS_TOXIC
+        || mon.ability == AB_POISON_HEAL) {
+        add_both(std::max(1, max_hp / 8));
+    }
+    // Toxic: max(1, max*counter/16) (residuals.cpp:325). Enumerate counters 1..15.
     if (mon.status == STATUS_TOXIC) {
         int32_t counter = mon.toxic_turns > 0 ? mon.toxic_turns : 1;
         for (int c = counter; c <= 15; ++c) {
             int32_t dmg = std::max(1, static_cast<int32_t>(
                 static_cast<int64_t>(max_hp) * c / 16));
-            add(-dmg);
+            add_both(dmg);
         }
     }
-    // Leftovers heal: +max(1, max/16) (residuals.cpp:220).
-    if (mon.item == I_LEFTOVERS) add(+std::max(1, max_hp / 16));
-    // Black Sludge poison-type heal / non-poison damage.
-    if (mon.item == I_BLACK_SLUDGE) {
-        add(+std::max(1, max_hp / 16));
-        add(-std::max(1, max_hp / 8));
+    // Leftovers / Rain Dish / Dry Skin(rain) / Grassy Terrain / Aqua Ring / Ingrain /
+    // Black Sludge (poison heal) / sandstorm / hail: all max(1, max/16).
+    if (mon.item == I_LEFTOVERS) add_both(std::max(1, max_hp / 16));
+    if (mon.ability == AB_RAIN_DISH) add_both(std::max(1, max_hp / 16));
+    if (mon.ability == AB_DRY_SKIN
+        && (state.weather == WEATHER_RAINY || state.weather == WEATHER_HEAVY_RAIN)) {
+        add_both(std::max(1, max_hp / 16));
     }
-    // Consumable heals — added as ±candidates (fires only when threshold crossed).
-    if (mon.item == I_SITRUS_BERRY)   { int a = max_hp / 4; if (a>0) { add(+a); add(-a); } }
-    if (mon.item == I_ORAN_BERRY)     { add(+10); add(-10); }
-    if (mon.item == I_BERRY_JUICE)    { add(+20); add(-20); }
+    if (state.terrain == 2 /*TERRAIN_GRASSY*/) add_both(std::max(1, max_hp / 16));
+    if (mon.volatiles & 32768 /*VOL_AQUA_RING*/) add_both(std::max(1, max_hp / 16));
+    if (mon.volatiles & 65536 /*VOL_INGRAIN*/) add_both(std::max(1, max_hp / 16));
+    if (mon.item == I_BLACK_SLUDGE) add_both(std::max(1, max_hp / 16));
+    if (state.weather == WEATHER_SANDSTORM || state.weather == WEATHER_HAIL) {
+        add_both(std::max(1, max_hp / 16));
+    }
+    // Black Sludge non-poison damage / Solar Power / Dry Skin(sun) / Sticky Barb /
+    // own Bad Dreams victim / opp Bad Dreams source magnitude / Leech Seed drain: all
+    // max(1, max/8).
+    if (mon.item == I_BLACK_SLUDGE) add_both(std::max(1, max_hp / 8));
+    if (mon.ability == AB_SOLAR_POWER
+        && (state.weather == WEATHER_SUNNY || state.weather == WEATHER_HARSH_SUN)) {
+        add_both(std::max(1, max_hp / 8));
+    }
+    if (mon.ability == AB_DRY_SKIN
+        && (state.weather == WEATHER_SUNNY || state.weather == WEATHER_HARSH_SUN)) {
+        add_both(std::max(1, max_hp / 8));
+    }
+    if (mon.item == I_STICKY_BARB) add_both(std::max(1, max_hp / 8));
+    if (mon.status == STATUS_SLEEP && opp.ability == AB_BAD_DREAMS) {
+        // Own axis takes the Bad Dreams damage when THIS mon is the sleeping victim.
+        add_both(std::max(1, max_hp / 8));
+    }
+    if (mon.volatiles & VOL_LEECH_SEEDED) add_both(std::max(1, max_hp / 8));
+    // Nightmare / residual Curse: max(1, max/4).
+    if (residual_has_ve(mon, VE_NIGHTMARE) && mon.status == STATUS_SLEEP) {
+        add_both(std::max(1, max_hp / 4));
+    }
+    if (mon.volatiles & VOL_CURSED) add_both(std::max(1, max_hp / 4));
+    // Bound: max(1, max/8), or max(1, max/6) if the opponent holds Binding Band.
+    if (residual_has_ve(mon, VE_BOUND)) {
+        add_both(std::max(1, max_hp / 8));
+        add_both(std::max(1, max_hp / 6));
+    }
+
+    // --- Cross-axis: Leech Seed's drain lands as damage on the seeded mon (own axis,
+    // handled above) but the SAME drain becomes a heal (or Liquid Ooze damage) on the
+    // seed source's own axis. When querying that source's side, add the pool too.
+    if (opp.volatiles & VOL_LEECH_SEEDED) {
+        int32_t drain = std::max(1, safe_max_hp(opp) / 8);
+        add_both(drain);
+        if (mon.item == I_BIG_ROOT) {
+            add_both(static_cast<int32_t>(static_cast<int64_t>(drain) * 13 / 10));
+        }
+    }
+
+    // --- Consumable HP-berry heals — Ripen doubles every one EXCEPT Berry Juice. ---
+    // Ripen doubling is computed as max_hp*2/denom directly (NOT (max_hp/denom)*2 —
+    // effects.cpp:454 preserves the extra precision from doubling before dividing).
+    if (mon.item == I_SITRUS_BERRY) {
+        int32_t a = ripen ? static_cast<int32_t>(static_cast<int64_t>(max_hp) * 2 / 4)
+                          : max_hp / 4;
+        if (a > 0) add_both(a);
+    }
+    if (mon.item == I_ORAN_BERRY) add_both(ripen ? 20 : 10);
+    if (mon.item == I_BERRY_JUICE) add_both(20);   // Berry Juice never doubles under Ripen.
     if (mon.item == I_FIGY_BERRY || mon.item == I_WIKI_BERRY
         || mon.item == I_MAGO_BERRY || mon.item == I_AGUAV_BERRY
         || mon.item == I_IAPAPA_BERRY) {
-        int a = max_hp / 2; if (a>0) { add(+a); add(-a); }
+        int32_t a = ripen ? static_cast<int32_t>(static_cast<int64_t>(max_hp) * 2 / 2)
+                          : max_hp / 2;
+        if (a > 0) add_both(a);
     }
+    // Cheek Pouch: max(1, max/3) self-heal on ANY berry consumption.
+    if (mon.ability == AB_CHEEK_POUCH && eff_internal::is_berry(mon.item)) {
+        add_both(std::max(1, max_hp / 3));
+    }
+
+    // --- §8: fraction-of-max on-hit deltas (own axis, keyed off self OR opponent). ---
+    if (mon.item == I_LIFE_ORB && mon.ability != AB_MAGIC_GUARD) {
+        add_both(std::max(1, max_hp / 10));
+    }
+    if (residual_knows_move(mon, MOVE_STEEL_BEAM)) add_both(std::max(1, max_hp / 2));
+    if (residual_knows_move(mon, MOVE_HIGH_JUMP_KICK)
+        || residual_knows_move(mon, MOVE_JUMP_KICK)
+        || residual_knows_move(mon, MOVE_SUPERCELL_SLAM)) {
+        add_both(std::max(1, max_hp / 2));
+    }
+    if (residual_knows_move(mon, MOVE_SPIKY_SHIELD)) add_both(std::max(1, max_hp / 8));
+    // Opponent's contact-punish item/abilities land on THIS mon's axis (attacker side).
+    if (opp.item == I_ROCKY_HELMET) add_both(std::max(1, max_hp / 6));
+    if (opp.ability == AB_ROUGH_SKIN || opp.ability == AB_IRON_BARBS) {
+        add_both(std::max(1, max_hp / 8));
+    }
+    // Aftermath: the ONE mechanic with NO max(1,...) floor (move_exec_damage.cpp:279).
+    if (opp.ability == AB_AFTERMATH) add_both(max_hp / 4);
 
     return std::vector<int32_t>(deltas.begin(), deltas.end());
 }

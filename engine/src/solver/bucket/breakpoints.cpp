@@ -5,6 +5,10 @@
 
 #include "solver/engine_queries.h"
 
+#include "damage.h"              // cpp_effective_stat
+#include "effects_internal.h"    // eff_internal::has_type, is_grounded
+#include "type_chart_lookup.h"   // cpp_type_effectiveness
+
 #include <algorithm>
 #include <set>
 #include <stdexcept>
@@ -112,6 +116,169 @@ bool BpSet::opp_has_interior_breakpoint(int32_t lo, int32_t hi) const {
 }
 
 // ---------------------------------------------------------------------------
+// registry_static_entries — per-mechanic breakpoints (Task 8 §4/§5/§6/§9).
+// Source IDs mirrored from damage.cpp, post_hit.cpp, effects.cpp, effects_entry.cpp,
+// move_exec_guards.cpp, effects_consts.h. See breakpoints.h for the BpEntryKind table.
+// ---------------------------------------------------------------------------
+
+static constexpr int32_t AB_BERSERK          = 201;  // post_hit.cpp:97
+static constexpr int32_t AB_EMERGENCY_EXIT   = 194;  // post_hit.cpp:97
+static constexpr int32_t AB_WIMP_OUT         = 193;  // post_hit.cpp:97
+static constexpr int32_t AB_OVERGROW         = 65;   // damage.cpp:29
+static constexpr int32_t AB_BLAZE            = 66;   // damage.cpp:30
+static constexpr int32_t AB_TORRENT          = 67;   // damage.cpp:31
+static constexpr int32_t AB_SWARM            = 68;   // damage.cpp:32
+static constexpr int32_t AB_DEFEATIST        = 129;  // damage.cpp:58
+static constexpr int32_t AB_POWER_CONSTRUCT  = 211;  // form-change, postponed (§4)
+static constexpr int32_t AB_SCHOOLING        = 208;
+static constexpr int32_t AB_SHIELDS_DOWN     = 197;
+static constexpr int32_t AB_ZEN_MODE         = 161;
+static constexpr int32_t AB_GULP_MISSILE     = 241;
+static constexpr int32_t AB_MAGIC_GUARD_BP   = 98;   // effects_consts.h
+static constexpr int32_t AB_VOLT_ABSORB      = 10;   // move_exec_guards.cpp:89
+static constexpr int32_t AB_WATER_ABSORB     = 11;
+static constexpr int32_t AB_DRY_SKIN_BP      = 87;
+static constexpr int32_t AB_EARTH_EATER      = 297;
+
+static constexpr int32_t MOVE_BRINE          = 362;  // core_leaf.cpp:53
+static constexpr int32_t MOVE_SUBSTITUTE_BP  = 164;  // effects_consts.h:129
+static constexpr int32_t MOVE_BELLY_DRUM_BP  = 187;  // effects_consts.h:138
+static constexpr int32_t MOVE_CURSE_BP       = 174;  // effects.cpp:1423
+static constexpr int32_t MOVE_SWALLOW_BP     = 256;  // effects_consts.h:125
+static constexpr int32_t MOVE_HEAL_PULSE_BP  = 505;  // effects_consts.h:125
+static constexpr int32_t MOVE_WISH_BP        = 273;  // effects_consts.h:125
+static constexpr int32_t MOVE_STRENGTH_SAP_BP= 668;  // effects_consts.h:125
+static constexpr int32_t MOVE_LIFE_DEW_BP    = 791;  // effects.cpp:1153
+static constexpr int32_t RECOVERY_HALF_BP[10] = {105, 303, 456, 135, 355, 236, 234, 235, 208, 659};
+
+static constexpr int32_t TYPE_GHOST_BP       = 13;   // effects_consts.h:70
+static constexpr int32_t TYPE_ROCK_BP        = 12;   // effects_consts.h:70
+
+static constexpr int32_t SC_STEALTH_ROCK_BP  = 4;    // effects_consts.h
+static constexpr int32_t SC_SPIKES_1_BP      = 5;
+static constexpr int32_t SC_SPIKES_2_BP      = 6;
+static constexpr int32_t SC_SPIKES_3_BP      = 7;
+
+static constexpr int32_t ITEM_HEAVY_DUTY_BOOTS_BP = 1120;  // effects_consts.h
+
+static bool knows_move(const PokemonState& mon, int32_t move_id) {
+    return mon.move_id0 == move_id || mon.move_id1 == move_id
+        || mon.move_id2 == move_id || mon.move_id3 == move_id;
+}
+
+static bool is_form_change_ability(int32_t ability) {
+    return ability == AB_POWER_CONSTRUCT || ability == AB_SCHOOLING
+        || ability == AB_SHIELDS_DOWN || ability == AB_ZEN_MODE
+        || ability == AB_GULP_MISSILE;
+}
+
+std::vector<BpEntry> registry_static_entries(const BattleState& state, int side) {
+    const SideState& own_side = (side == 0) ? state.side0 : state.side1;
+    const SideState& opp_side = (side == 0) ? state.side1 : state.side0;
+    const PokemonState& own = own_side.team[own_side.active_indices[0]];
+    const PokemonState& opp = opp_side.team[opp_side.active_indices[0]];
+
+    if (is_form_change_ability(own.ability)) {
+        throw std::runtime_error(
+            "registry_static_entries: form-change ability (" + std::to_string(own.ability) +
+            ") is out of scope for Task 8 — postponed, not modeled");
+    }
+
+    int32_t max_hp = get_max_hp(state, side);
+    std::vector<BpEntry> entries;
+
+    // --- §4: crossing/pinch abilities (own axis) ---
+    if (own.ability == AB_BERSERK || own.ability == AB_EMERGENCY_EXIT
+        || own.ability == AB_WIMP_OUT) {
+        entries.push_back({max_hp / 2, BpEntryKind::HalfCrossing});
+    }
+    if (own.ability == AB_BLAZE || own.ability == AB_TORRENT
+        || own.ability == AB_OVERGROW || own.ability == AB_SWARM) {
+        entries.push_back({max_hp / 3, BpEntryKind::PinchThird});
+    }
+    if (own.ability == AB_DEFEATIST) {
+        entries.push_back({max_hp / 2, BpEntryKind::DefeatistHalf});
+    }
+
+    // --- §5: self-cost moves (own axis) ---
+    if (knows_move(own, MOVE_SUBSTITUTE_BP)) {
+        entries.push_back({max_hp / 4, BpEntryKind::SubCostQuarter});
+    }
+    bool ghost_curse = knows_move(own, MOVE_CURSE_BP) && eff_internal::has_type(own, TYPE_GHOST_BP);
+    if (knows_move(own, MOVE_BELLY_DRUM_BP) || ghost_curse) {
+        entries.push_back({max_hp / 2, BpEntryKind::CostHalf});
+    }
+
+    // --- §6: Brine (defender's own axis, keyed off the OTHER side's moveset) ---
+    if (knows_move(opp, MOVE_BRINE)) {
+        entries.push_back({max_hp / 2, BpEntryKind::BrineHalf});
+    }
+
+    // --- §9: heal-cap kinks (own axis, breakpoint = max_hp - heal_amount) ---
+    bool is_recovery_move = false;
+    for (int32_t m : RECOVERY_HALF_BP) if (m == own.move_id0 || m == own.move_id1
+                                            || m == own.move_id2 || m == own.move_id3)
+        is_recovery_move = true;
+    if (is_recovery_move || knows_move(own, MOVE_LIFE_DEW_BP)) {
+        int32_t candidates[3] = {max_hp / 2, max_hp / 4,
+                                 (int32_t)((int64_t)max_hp * 2 / 3)};
+        for (int32_t c : candidates)
+            entries.push_back({max_hp - c, BpEntryKind::HealCapKink});
+    }
+    if (knows_move(own, MOVE_SWALLOW_BP)) {
+        int32_t candidates[2] = {max_hp / 4, max_hp / 2};
+        for (int32_t c : candidates)
+            entries.push_back({max_hp - c, BpEntryKind::HealCapKink});
+    }
+    if (knows_move(opp, MOVE_HEAL_PULSE_BP)) {
+        entries.push_back({max_hp - max_hp / 2, BpEntryKind::HealCapKink});
+    }
+    if (knows_move(own, MOVE_STRENGTH_SAP_BP)) {
+        // 13 candidates: opponent's effective Atk at stage -6..+6.
+        for (int32_t stage = -6; stage <= 6; ++stage) {
+            PokemonState opp_at_stage = opp;
+            opp_at_stage.stage0 = stage;
+            int32_t atk = cpp_effective_stat(opp_at_stage, /*stat_idx=*/1);
+            entries.push_back({max_hp - atk, BpEntryKind::HealCapKink});
+        }
+    }
+    if (own.ability == AB_VOLT_ABSORB || own.ability == AB_WATER_ABSORB
+        || own.ability == AB_DRY_SKIN_BP || own.ability == AB_EARTH_EATER) {
+        entries.push_back({max_hp - max_hp / 4, BpEntryKind::HealCapKink});
+    }
+    if (knows_move(own, MOVE_WISH_BP)) {
+        entries.push_back({max_hp - max_hp / 2, BpEntryKind::HealCapKink});
+    }
+    if (own_side.has_wish_pending && own_side.wish_hp > 0) {
+        entries.push_back({max_hp - own_side.wish_hp, BpEntryKind::HealCapKink});
+    }
+
+    // --- §9: entry-hazard kinks (own axis, breakpoint = damage value itself) ---
+    auto has_sc = [&](int32_t cond) {
+        for (const auto& e : own_side.side_conditions) if (e.condition == cond) return true;
+        return false;
+    };
+    if (has_sc(SC_STEALTH_ROCK_BP) && own.ability != AB_MAGIC_GUARD_BP
+        && own.item != ITEM_HEAVY_DUTY_BOOTS_BP) {
+        double effv = 1.0;
+        for (int32_t t : own.types) effv *= cpp_type_effectiveness(TYPE_ROCK_BP, t);
+        int32_t damage = std::max(1, (int32_t)(max_hp * effv / 8.0));
+        entries.push_back({damage, BpEntryKind::HazardKink});
+    }
+    if (eff_internal::is_grounded(own, state) && own.ability != AB_MAGIC_GUARD_BP) {
+        int32_t spike_damage = 0;
+        if (has_sc(SC_SPIKES_3_BP)) spike_damage = max_hp / 4;
+        else if (has_sc(SC_SPIKES_2_BP)) spike_damage = max_hp / 6;
+        else if (has_sc(SC_SPIKES_1_BP)) spike_damage = max_hp / 8;
+        if (spike_damage > 0) {
+            entries.push_back({std::max(1, spike_damage), BpEntryKind::HazardKink});
+        }
+    }
+
+    return entries;
+}
+
+// ---------------------------------------------------------------------------
 // BreakpointRegistry::instantiate
 // ---------------------------------------------------------------------------
 
@@ -141,6 +308,11 @@ static std::vector<int32_t> seed_axis(const BattleState& state, int side,
     // hp_thresholds output (delegated — do NOT re-derive floor arithmetic).
     for (const HpThreshold& t : th.thresholds) {
         bps.push_back(t.threshold_hp);
+    }
+
+    // Task 8: per-mechanic registry entries (§4-§9). May throw "form-change".
+    for (const BpEntry& e : registry_static_entries(state, side)) {
+        bps.push_back(e.hp);
     }
 
     // Question HP boundary for this axis (0 = unset).

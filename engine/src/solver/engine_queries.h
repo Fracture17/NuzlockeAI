@@ -49,7 +49,11 @@ DamageTable damage_table(const BattleState& state, int attacker_side, const Exec
 enum class ThresholdKind {
     FullHp,   // triggered when HP == max_hp (Focus Sash, Sturdy, Multiscale, Shadow Shield)
     Half,     // triggered when HP <= max_hp / 2 (Sitrus Berry)
-    Quarter,  // triggered when HP <= max_hp / 4 (pinch/stat/Custap berries)
+    // Quarter names the berry family (pinch/stat/Custap berries), not a literal /4:
+    // the emitted threshold_hp is engine-exact, i.e. max_hp / 2 for Gluttony holders
+    // (ability 82 rewrites denom 4 -> 2 at both the check_berry chokepoint and the
+    // Custap action-order site). Non-Gluttony holders trigger at max_hp / 4.
+    Quarter,
 };
 
 struct HpThreshold {

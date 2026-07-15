@@ -568,3 +568,71 @@ TEST_CASE("engine_queries: thresholds — Liechi Berry → Quarter threshold",
     }
     REQUIRE(found);
 }
+
+// ---------------------------------------------------------------------------
+// Task 8 Step 1 — Gluttony (ability 82) rewrites the quarter-berry AND Custap
+// denominator from /4 to /2 (engine effects.cpp:439-440, core_leaf.cpp:726).
+// Half berries (Sitrus) are unaffected. Unnerve suppression is deliberately NOT
+// modeled (sound over-split) — a Gluttony holder facing an Unnerve opponent still
+// emits the widened threshold.
+// ---------------------------------------------------------------------------
+
+static constexpr int32_t AB_GLUTTONY_T = 82;
+static constexpr int32_t AB_UNNERVE_T  = 127;
+static constexpr int32_t ITEM_SALAC_T  = 203;   // quarter (stat pinch) berry
+
+static int32_t quarter_threshold(const HpThresholds& th) {
+    for (const auto& t : th.thresholds)
+        if (t.kind == ThresholdKind::Quarter) return t.threshold_hp;
+    return -1;
+}
+
+TEST_CASE("engine_queries: Gluttony widens Salac quarter threshold to half",
+          "[engine_queries][gluttony]") {
+    // Salac holder, max_hp 203. Gluttony → 203/2 = 101; without → 203/4 = 50.
+    BattleState with = make_basic_state(MOVE_TACKLE, MOVE_TACKLE,
+                                        AB_NONE, AB_GLUTTONY_T,
+                                        ITEM_NONE, ITEM_SALAC_T,
+                                        100, 60, 120, 80, 200, 203);
+    REQUIRE(quarter_threshold(hp_thresholds(with, 1)) == 101);
+
+    BattleState without = make_basic_state(MOVE_TACKLE, MOVE_TACKLE,
+                                           AB_NONE, AB_NONE,
+                                           ITEM_NONE, ITEM_SALAC_T,
+                                           100, 60, 120, 80, 200, 203);
+    REQUIRE(quarter_threshold(hp_thresholds(without, 1)) == 50);
+}
+
+TEST_CASE("engine_queries: Gluttony widens Custap quarter threshold to half",
+          "[engine_queries][gluttony]") {
+    BattleState with = make_basic_state(MOVE_TACKLE, MOVE_TACKLE,
+                                        AB_NONE, AB_GLUTTONY_T,
+                                        ITEM_NONE, ITEM_CUSTAP,
+                                        100, 60, 120, 80, 200, 203);
+    REQUIRE(quarter_threshold(hp_thresholds(with, 1)) == 101);
+}
+
+TEST_CASE("engine_queries: Gluttony does NOT affect Sitrus half berry",
+          "[engine_queries][gluttony]") {
+    // Sitrus is denom=2 already; Gluttony only rewrites denom==4. Still Half=101.
+    BattleState s = make_basic_state(MOVE_TACKLE, MOVE_TACKLE,
+                                     AB_NONE, AB_GLUTTONY_T,
+                                     ITEM_NONE, ITEM_SITRUS,
+                                     100, 60, 120, 80, 200, 203);
+    HpThresholds th = hp_thresholds(s, 1);
+    bool found = false;
+    for (const auto& t : th.thresholds)
+        if (t.kind == ThresholdKind::Half && t.threshold_hp == 101) found = true;
+    REQUIRE(found);
+}
+
+TEST_CASE("engine_queries: Gluttony threshold emitted even against Unnerve opponent",
+          "[engine_queries][gluttony]") {
+    // Unnerve (opponent) suppresses the berry in the real engine, but hp_thresholds
+    // deliberately over-includes (sound). Threshold still 101.
+    BattleState s = make_basic_state(MOVE_TACKLE, MOVE_TACKLE,
+                                     AB_UNNERVE_T, AB_GLUTTONY_T,
+                                     ITEM_NONE, ITEM_SALAC_T,
+                                     100, 60, 120, 80, 200, 203);
+    REQUIRE(quarter_threshold(hp_thresholds(s, 1)) == 101);
+}

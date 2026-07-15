@@ -2321,3 +2321,17 @@ file = "engine/src/solver/bucket/win_solver.cpp"
 confidence = "provisional"
 rationale = "Root bucket = singleton HP intervals at initial state (sound, simplest; segment-wide roots are a later sweep-reuse optimization). visit_cap 1e6 -> INDETERMINATE(VisitCap) added beyond the required depth cap as insurance since there is no memoization."
 updated = "2026-07-15T19:28:21.077Z"
+
+[[record]]
+name = "registry_vs_delta_convention"
+file = "engine/src/solver/bucket/breakpoints.cpp"
+confidence = "settled"
+rationale = "Residual/on-hit fraction-of-max shifts live ONLY in residual_delta_candidates (both signs; item-7 single mechanism). Move/status-parameterized heal-caps (recovery/Swallow/Heal Pulse/Sap/Wish/Absorb) + hazard chips = STATIC registry entries (20d)."
+updated = "2026-07-15T21:23:53.524Z"
+
+[[record]]
+name = "form_change_throw_instantiate"
+file = "engine/src/solver/bucket/breakpoints.cpp"
+confidence = "settled"
+rationale = "Form-change abilities {211,208,197,161,241} THROW runtime_error containing 'form-change' at instantiate (14 #8): loud beats silent thresholds whose max_hp rescale Expand cannot honor. Struggle delta omitted (PP=40 corpus; loud throw if reached)."
+updated = "2026-07-15T21:23:55.224Z"

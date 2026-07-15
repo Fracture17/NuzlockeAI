@@ -43,10 +43,16 @@ static const int32_t QUARTER_BERRIES[] = {
 };
 static constexpr int N_QUARTER_BERRIES = 12;
 
-// Custap Berry (210): HP threshold = max_hp / 4 (core_leaf.cpp:726-731).
-// Triggers "goes first" priority at <= max_hp/4. Gluttony widens to <= max_hp/2 but
-// we conservatively model the default (non-Gluttony) quarter threshold here.
+// Custap Berry (210): HP threshold = max_hp / 4 (core_leaf.cpp:726-731), widened to
+// max_hp / 2 by Gluttony — same denominator rewrite as the quarter berries below.
 static constexpr int32_t ITEM_CUSTAP = 210;
+
+// Gluttony (82): rewrites the quarter-berry (denom=4) trigger to denom=2 for BOTH
+// the check_berry chokepoint (effects.cpp:439-440) and the Custap action-order site
+// (core_leaf.cpp:726-728). USER 2026-07-15 (gluttony_full_impl_task8): implement
+// fully, no hacks. Unnerve suppression is deliberately NOT modeled here (sound
+// over-split — see file header caveat below).
+static constexpr int32_t AB_GLUTTONY = 82;
 
 // Unrecognized consumables: items the engine will consume but that hp_thresholds does not model.
 // These set residual_unknown=true so the analytic caller scopes out.
@@ -259,21 +265,26 @@ HpThresholds hp_thresholds(const BattleState& state, int side) {
         result.thresholds.push_back({threshold_hp, ThresholdKind::Half});
     }
 
-    // --- Quarter-HP berries (threshold_denom=4) and Custap ---
-    // Trigger condition: mon.hp <= max_hp / 4.
-    // threshold_hp = max_hp / 4 (floor division).
+    // --- Quarter-HP berries (threshold_denom=4, /2 under Gluttony) and Custap ---
+    // Trigger condition: mon.hp <= max_hp / denom, denom = Gluttony(ability==82) ? 2 : 4
+    // (effects.cpp:439-440). kind stays Quarter regardless of denom — it names the
+    // berry family, not the literal divisor; the emitted value is always engine-exact.
+    bool gluttony = (ability == AB_GLUTTONY);
+    int32_t quarter_denom = gluttony ? 2 : 4;
+
     bool is_quarter_berry = false;
     for (int i = 0; i < N_QUARTER_BERRIES; ++i) {
         if (item == QUARTER_BERRIES[i]) { is_quarter_berry = true; break; }
     }
     if (is_quarter_berry) {
-        int32_t threshold_hp = max_hp / 4;
+        int32_t threshold_hp = max_hp / quarter_denom;
         result.thresholds.push_back({threshold_hp, ThresholdKind::Quarter});
     }
 
-    // Custap Berry (210): consumed at <= max_hp / 4 (core_leaf.cpp:726-728).
+    // Custap Berry (210): consumed at <= max_hp / denom (core_leaf.cpp:726-728),
+    // same Gluttony-conditional denominator as the action-order site.
     if (item == ITEM_CUSTAP) {
-        int32_t threshold_hp = max_hp / 4;
+        int32_t threshold_hp = max_hp / quarter_denom;
         result.thresholds.push_back({threshold_hp, ThresholdKind::Quarter});
     }
 
