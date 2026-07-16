@@ -109,6 +109,8 @@ add_library(nuzlocke_solver STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/bucket.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/expand.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/win_solver.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/pipeline.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/rcheck_core.cpp
 )
 set_target_properties(nuzlocke_solver PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(nuzlocke_solver PUBLIC nuzlocke_core)
@@ -142,6 +144,15 @@ add_executable(ccheck EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/ccheck.cpp)
 target_link_libraries(ccheck PRIVATE nuzlocke_solver nuzlocke_core)
 target_compile_definitions(ccheck PRIVATE
+    NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+# rcheck: bucket-pipeline referee audit vs exact bsolver (Task 10 exit gate).
+# EXCLUDE_FROM_ALL: never built by default; build on demand:
+#   cmake --build engine/build --target rcheck
+add_executable(rcheck EXCLUDE_FROM_ALL
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/audit/rcheck.cpp)
+target_link_libraries(rcheck PRIVATE nuzlocke_solver nuzlocke_core)
+target_compile_definitions(rcheck PRIVATE
     NUZLOCKE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 # audit_analytic: tiered analytic-certifier audit (analytic → pessimal → exact verification).

@@ -2356,3 +2356,17 @@ file = "engine/src/solver/bucket/ai_breakpoints.cpp"
 confidence = "settled"
 rationale = "Estimates via ai_damage functions with the scorer's own LuckProfiles on state copies; pct thresholds by flip-pair bisection over verbatim expressions (both values). Throws ai-final-gambit (two-axis diagonal) and ai-bench (switch scoring), postponed."
 updated = "2026-07-16T03:07:24.122Z"
+
+[[record]]
+name = "pipeline_verdict_lattice"
+file = "engine/src/solver/bucket/pipeline.cpp"
+confidence = "settled"
+rationale = "Pessimal-LOSS short-circuits to LOSS (B skipped); pessimal WIN/INDET treated identically (never evidence); B-WIN -> WIN; else UNKNOWN; exceptions always propagate (rcheck is the catcher). Amendment 18 + pessimal_loss_pruner_only."
+updated = "2026-07-16T03:57:45.253Z"
+
+[[record]]
+name = "rcheck_classification_bins"
+file = "engine/src/solver/audit/rcheck_core.cpp"
+confidence = "settled"
+rationale = "9-bin taxonomy; THROWN precedes referee check; REFEREE_INDET counted, excluded from soundness evidence; UNKNOWN+exact-LOSS = SOUND conservatism; CONSERVATIVE_UNTAGGED sub-split by B reason (cap != modeling gap). Referee budgets = CLI flags."
+updated = "2026-07-16T03:58:08.096Z"
