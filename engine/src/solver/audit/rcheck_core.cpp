@@ -154,6 +154,12 @@ json telemetry_json(const BucketWinStats& s) {
         {"conceded_branches", s.conceded_branches},
         {"max_depth",         s.max_depth},
         {"b_elapsed_us",      s.elapsed_us},
+        {"edge_hits",               s.edge_hits},
+        {"edge_misses",             s.edge_misses},
+        {"memo_hits",               s.memo_hits},
+        {"memo_stores",             s.memo_stores},
+        {"memo_suppressed",         s.memo_suppressed},
+        {"memo_containment_missed", s.memo_containment_missed},
     };
 }
 
@@ -226,6 +232,12 @@ RcheckReport rcheck_run(const RcheckConfig& cfg, std::ostream& out) {
     pcfg.pessimal_cfg.node_cap          = cfg.pess_nodes;
     pcfg.win_cfg.depth_cap              = cfg.b_depth;
     pcfg.win_cfg.visit_cap              = cfg.b_visits;
+    // Cache ownership: leave win_cfg.cache = nullptr so bucket_win_certify builds a
+    // per-certify local cache. rcheck runs one question per matchup and matchups never
+    // share d, so a shard-lifetime shared cache would add unbounded memory for zero
+    // cross-matchup hits; the pass-in seam exists for future same-matchup question families.
+    pcfg.win_cfg.enable_edge_cache      = cfg.enable_cache;
+    pcfg.win_cfg.enable_verdict_memo    = cfg.enable_cache;
 
     BsolverConfig exact_cfg;
     exact_cfg.mode              = BMode::Exact;

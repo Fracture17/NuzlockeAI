@@ -38,6 +38,8 @@ def build_commands(args):
                       ("--b-visits", args.b_visits)):
         if val is not None:
             budget_flags += [flag, str(val)]
+    if args.no_cache:
+        budget_flags += ["--no-cache"]
 
     for klass in args.classes:
         for seed in args.seeds:
@@ -71,6 +73,8 @@ def main(argv=None):
     ap.add_argument("--pess-nodes", type=int, default=None)
     ap.add_argument("--b-depth", type=int, default=None)
     ap.add_argument("--b-visits", type=int, default=None)
+    ap.add_argument("--no-cache", action="store_true",
+                    help="disable B-solver edge cache + verdict memo (A/B determinism)")
     args = ap.parse_args(argv)
 
     cells = list(build_commands(args))

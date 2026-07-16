@@ -2405,3 +2405,10 @@ file = "engine/src/solver/bucket/win_solver.cpp"
 confidence = "requirement"
 rationale = "USER 2026-07-16: measure cache w/ full PP-in-d first, but 'we will probably have to switch' to PP tracked only for cycle-capable moves (heal/Harvest/Leftovers; Splash via self-cycle check) + total-PP turn cap. Full PP hides cycles + fragments reuse."
 updated = "2026-07-16T16:51:04.096Z"
+
+[[record]]
+name = "rcheck_local_cache_only"
+file = "engine/src/solver/audit/rcheck_core.cpp"
+confidence = "provisional"
+rationale = "rcheck leaves win_cfg.cache=nullptr (per-certify local cache): one question per matchup and matchups never share d, so a shard-lifetime shared cache = unbounded memory for zero cross-matchup hits. Revisit when same-matchup question batches exist."
+updated = "2026-07-16T17:11:35.717Z"

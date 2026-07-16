@@ -90,6 +90,10 @@ struct RcheckConfig {
     int      b_depth      = 500;
     uint64_t b_visits     = 1'000'000;
 
+    // Corpus-level A/B determinism switch. False disables both the B-solver edge cache
+    // and verdict memo (CLI --no-cache); leaves cache ownership untouched (always local).
+    bool     enable_cache = true;
+
     // Injected matchups + seams (tests / pipeline coverage). Non-empty injected → the
     // generator is NOT used. injected non-empty AND repo_root non-empty → throws.
     std::vector<BattleState> injected;

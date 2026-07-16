@@ -7,8 +7,9 @@ with the embedded summary n, embedded bins that disagree with recomputed bins, o
 --expect-shards / --expect-n violations. Recomputes every bin from the per-matchup records
 and cross-checks the embedded summaries. Reports per-class/per-seed bin tables, concession
 histogram, throw census, timing percentiles (pessimal/B/exact/total), telemetry aggregates,
-CONSERVATIVE_UNTAGGED sub-split by B reason, and the referee-INDET rate. Exit 1 on any hard
-soundness failure or integrity error; else prints "PASS: zero soundness failures".
+CONSERVATIVE_UNTAGGED sub-split by B reason, edge-cache/verdict-memo effectiveness (over
+B-ran records), and the referee-INDET rate. Exit 1 on any hard soundness failure or
+integrity error; else prints "PASS: zero soundness failures".
 
 Usage:
   rcheck_aggregate.py GLOB [GLOB ...] [--expect-shards N] [--expect-n N] [--json OUT]
@@ -26,6 +27,10 @@ CLASSES = [
     "CONSERVATIVE_TAGGED", "CONSERVATIVE_UNTAGGED",
 ]
 HARD_FAIL_CLASSES = {"HARD_FAIL_B_WIN", "HARD_FAIL_PESSIMAL_LOSS"}
+
+# Edge-cache + verdict-memo counters (win_solver Tasks 1-2). Required on every B-ran record.
+CACHE_FIELDS = ("edge_hits", "edge_misses", "memo_hits", "memo_stores",
+                "memo_suppressed", "memo_containment_missed")
 
 
 class IntegrityError(Exception):
@@ -123,6 +128,7 @@ def aggregate(paths, expect_shards=None, expect_n=None):
     timings_by_class = defaultdict(lambda: {"pessimal": [], "b": [], "exact": [], "total": []})
     telemetry = {k: [] for k in
                  ("buckets_visited", "expand_calls", "replays", "oracle_leaves", "max_depth")}
+    cache_series = {k: [] for k in CACHE_FIELDS}  # per-field values over B-ran records
 
     total_records = 0
     hard_fails = 0
@@ -161,9 +167,34 @@ def aggregate(paths, expect_shards=None, expect_n=None):
                 if key in tel:
                     telemetry[key].append(tel[key])
 
+            # Cache/memo effectiveness — only over records where B actually ran.
+            # A B-ran record missing any counter is a corrupt/stale shard: fail loud.
+            if not pl.get("thrown") and pl.get("b_ran"):
+                for key in CACHE_FIELDS:
+                    if key not in tel:
+                        raise IntegrityError(
+                            f"{path}: B-ran record index {rec.get('index')} missing "
+                            f"telemetry field '{key}' (stale shard?)")
+                    cache_series[key].append(tel[key])
+
     if expect_n is not None and total_records != expect_n:
         raise IntegrityError(
             f"--expect-n {expect_n} but aggregated {total_records} matchups")
+
+    edge_hits = sum(cache_series["edge_hits"])
+    edge_misses = sum(cache_series["edge_misses"])
+    edge_total = edge_hits + edge_misses
+    cache = {
+        "b_ran_records": len(cache_series["edge_hits"]),
+        "edge_hits": edge_hits,
+        "edge_misses": edge_misses,
+        "edge_hit_rate": (edge_hits / edge_total) if edge_total else 0.0,
+        "memo_hits": sum(cache_series["memo_hits"]),
+        "memo_stores": sum(cache_series["memo_stores"]),
+        "memo_suppressed": sum(cache_series["memo_suppressed"]),
+        "memo_containment_missed": sum(cache_series["memo_containment_missed"]),
+        "per_field": {k: {"sum": sum(v), **_pctiles(v)} for k, v in cache_series.items()},
+    }
 
     referee_indet = bins["REFEREE_INDET"]
     report = {
@@ -184,6 +215,7 @@ def aggregate(paths, expect_shards=None, expect_n=None):
             for k, v in timings_by_class.items()},
         "telemetry": {
             k: {"sum": sum(v), **_pctiles(v)} for k, v in telemetry.items()},
+        "cache": cache,
     }
     return report
 
@@ -237,6 +269,17 @@ def print_report(report):
     print("\nTelemetry aggregates (sum + p50/p90/p99):")
     for key, agg in report["telemetry"].items():
         print(f"  {key:<16}: sum={agg['sum']}  p50={agg['p50']:.0f}  "
+              f"p90={agg['p90']:.0f}  p99={agg['p99']:.0f}")
+
+    c = report["cache"]
+    print(f"\nCache effectiveness (over {c['b_ran_records']} B-ran records):")
+    print(f"  edge hits={c['edge_hits']}  misses={c['edge_misses']}  "
+          f"hit_rate={100.0 * c['edge_hit_rate']:.2f}%")
+    print(f"  memo hits={c['memo_hits']}  stores={c['memo_stores']}  "
+          f"suppressed={c['memo_suppressed']}  containment_missed={c['memo_containment_missed']}")
+    for key in CACHE_FIELDS:
+        agg = c["per_field"][key]
+        print(f"  {key:<24}: sum={agg['sum']}  p50={agg['p50']:.0f}  "
               f"p90={agg['p90']:.0f}  p99={agg['p99']:.0f}")
 
 
@@ -294,7 +337,10 @@ def _make_record(klass, seed, index, classification, thrown=None, concessions=No
         "exact": {"verdict": "WIN", "reason": "None"},
         "timing_us": {"pessimal": timing[0], "b": timing[1], "exact": timing[2]},
         "telemetry": telemetry or {"buckets_visited": 5, "expand_calls": 3, "replays": 2,
-                                   "oracle_leaves": 10, "max_depth": 4},
+                                   "oracle_leaves": 10, "max_depth": 4,
+                                   "edge_hits": 1, "edge_misses": 3, "memo_hits": 0,
+                                   "memo_stores": 2, "memo_suppressed": 0,
+                                   "memo_containment_missed": 0},
     }
 
 

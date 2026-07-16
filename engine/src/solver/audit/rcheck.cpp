@@ -5,7 +5,7 @@
 // Usage:
 //   rcheck --seed S --klass {uniform|berry|sash} --n N --shard k/of --out PATH
 //          [--exact-leaves N --exact-nodes N --pess-leaves N --pess-nodes N
-//           --b-depth N --b-visits N]
+//           --b-depth N --b-visits N --no-cache]
 #include "solver/audit/rcheck_core.h"
 
 #include <cstdint>
@@ -38,6 +38,59 @@ static void parse_shard(const char* s, int& k, int& of) {
     of = (int)std::atol(slash + 1);
 }
 
+// Every value-taking flag (consumes the following argv token).
+static const char* const VALUE_FLAGS[] = {
+    "--seed", "--n", "--klass", "--shard", "--out",
+    "--exact-leaves", "--exact-nodes", "--pess-leaves", "--pess-nodes",
+    "--b-depth", "--b-visits",
+};
+// Every boolean flag (no following token).
+static const char* const BOOL_FLAGS[] = {"--no-cache", "--help", "-h"};
+
+static bool in_list(const char* s, const char* const* list, int n) {
+    for (int i = 0; i < n; ++i)
+        if (std::strcmp(s, list[i]) == 0) return true;
+    return false;
+}
+
+static void print_usage(std::FILE* f) {
+    std::fprintf(f,
+        "usage: rcheck [flags]\n"
+        "  --seed S              RNG seed (default 1)\n"
+        "  --klass K             matchup class: uniform|berry|sash (default uniform)\n"
+        "  --n N                 matchups per shard (default 100)\n"
+        "  --shard k/of          shard index / count (default 0/1)\n"
+        "  --out PATH            JSONL output path (default stdout)\n"
+        "  --exact-leaves N      exact referee oracle leaf budget (default 5000)\n"
+        "  --exact-nodes N       exact referee node cap (default 1000)\n"
+        "  --pess-leaves N       pessimal oracle leaf budget (default 5000)\n"
+        "  --pess-nodes N        pessimal node cap (default 1000)\n"
+        "  --b-depth N           B-solver depth cap (default 500)\n"
+        "  --b-visits N          B-solver visit cap (default 1000000)\n"
+        "  --no-cache            disable B-solver edge cache + verdict memo\n"
+        "  --help, -h            print this help and exit 0\n");
+}
+
+// Validate every argv token. --help/-h → print usage to stdout, exit 0. Any unrecognized
+// argument → print usage to stderr, exit nonzero. Value flags consume their next token.
+// (Fixes the silent-ignore bug where a stray flag started a default run.)
+static void validate_args(int argc, char** argv) {
+    const int nval  = (int)(sizeof(VALUE_FLAGS) / sizeof(VALUE_FLAGS[0]));
+    const int nbool = (int)(sizeof(BOOL_FLAGS) / sizeof(BOOL_FLAGS[0]));
+    for (int i = 1; i < argc; ++i) {
+        const char* a = argv[i];
+        if (std::strcmp(a, "--help") == 0 || std::strcmp(a, "-h") == 0) {
+            print_usage(stdout);
+            std::exit(0);
+        }
+        if (in_list(a, VALUE_FLAGS, nval)) { ++i; continue; }  // skip its value
+        if (in_list(a, BOOL_FLAGS, nbool)) continue;
+        std::fprintf(stderr, "rcheck: unrecognized argument '%s'\n", a);
+        print_usage(stderr);
+        std::exit(2);
+    }
+}
+
 static std::string detect_repo_root() {
     const char* env = std::getenv("NUZLOCKE_REPO_ROOT");
     if (env) return env;
@@ -49,6 +102,8 @@ static std::string detect_repo_root() {
 }
 
 int main(int argc, char** argv) {
+    validate_args(argc, argv);
+
     RcheckConfig cfg;
     cfg.seed  = (uint64_t)parse_long(get_arg(argc, argv, "--seed", "1"), 1);
     cfg.n     = (int)parse_long(get_arg(argc, argv, "--n", "100"), 100);
@@ -63,6 +118,7 @@ int main(int argc, char** argv) {
     cfg.pess_nodes   = (uint64_t)parse_long(get_arg(argc, argv, "--pess-nodes",   "1000"), 1000);
     cfg.b_depth      = (int)parse_long(get_arg(argc, argv, "--b-depth", "500"), 500);
     cfg.b_visits     = (uint64_t)parse_long(get_arg(argc, argv, "--b-visits", "1000000"), 1000000);
+    cfg.enable_cache = !has_flag(argc, argv, "--no-cache");
 
     const char* out_path = get_arg(argc, argv, "--out", nullptr);
 

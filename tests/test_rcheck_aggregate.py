@@ -16,19 +16,26 @@ agg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(agg)
 
 
+_CACHE_TEL = {"edge_hits": 0, "edge_misses": 3, "memo_hits": 0, "memo_stores": 1,
+              "memo_suppressed": 0, "memo_containment_missed": 0}
+
+
 def _record(klass, seed, index, classification, timing=(10, 20, 30),
-            b_reason="None", concessions=None, thrown=None):
+            b_reason="None", concessions=None, thrown=None, telemetry=None):
     pipeline = {"verdict": "UNKNOWN", "b_ran": True, "b_reason": b_reason,
                 "concessions": concessions or {}, "thrown": None}
     if thrown is not None:
         pipeline = {"verdict": None, "b_ran": False, "thrown": thrown}
+    tel = {"buckets_visited": 5, "expand_calls": 3, "replays": 2,
+           "oracle_leaves": 10, "max_depth": 4, **_CACHE_TEL}
+    if telemetry is not None:
+        tel = telemetry
     return {
         "klass": klass, "seed": seed, "index": index, "shard": {"k": 0, "of": 1},
         "classification": classification, "pipeline": pipeline,
         "exact": {"verdict": "WIN", "reason": "None"},
         "timing_us": {"pessimal": timing[0], "b": timing[1], "exact": timing[2]},
-        "telemetry": {"buckets_visited": 5, "expand_calls": 3, "replays": 2,
-                      "oracle_leaves": 10, "max_depth": 4},
+        "telemetry": tel,
     }
 
 
@@ -130,3 +137,56 @@ def test_expect_shards_violation(tmp_path):
     _write(str(s0), [_record("uniform", 1, 0, "SOUND_AGREE_WIN")])
     with pytest.raises(agg.IntegrityError):
         agg.aggregate([str(s0)], expect_shards=2)
+
+
+def _cache_tel(edge_hits, edge_misses, **extra):
+    return {"buckets_visited": 5, "expand_calls": 3, "replays": 2, "oracle_leaves": 10,
+            "max_depth": 4, "edge_hits": edge_hits, "edge_misses": edge_misses,
+            "memo_hits": extra.get("memo_hits", 0), "memo_stores": extra.get("memo_stores", 0),
+            "memo_suppressed": extra.get("memo_suppressed", 0),
+            "memo_containment_missed": extra.get("memo_containment_missed", 0)}
+
+
+def test_cache_effectiveness_hit_rate(tmp_path):
+    s0 = tmp_path / "s0.jsonl"
+    _write(str(s0), [
+        _record("uniform", 1, 0, "SOUND_AGREE_WIN",
+                telemetry=_cache_tel(2, 6, memo_hits=1, memo_stores=3)),
+        _record("uniform", 1, 1, "CONSERVATIVE_UNTAGGED",
+                telemetry=_cache_tel(1, 1, memo_stores=2, memo_suppressed=1)),
+    ])
+    rep = agg.aggregate([str(s0)])
+    cache = rep["cache"]
+    assert cache["edge_hits"] == 3
+    assert cache["edge_misses"] == 7
+    assert cache["edge_hit_rate"] == pytest.approx(3 / 10)
+    assert cache["memo_hits"] == 1
+    assert cache["memo_stores"] == 5
+    assert cache["memo_suppressed"] == 1
+    assert cache["memo_containment_missed"] == 0
+
+
+def test_cache_zero_edges_hit_rate_is_zero(tmp_path):
+    s0 = tmp_path / "s0.jsonl"
+    _write(str(s0), [_record("uniform", 1, 0, "SOUND_AGREE_WIN",
+                             telemetry=_cache_tel(0, 0))])
+    rep = agg.aggregate([str(s0)])
+    assert rep["cache"]["edge_hit_rate"] == 0.0
+
+
+def test_b_ran_missing_cache_field_is_loud(tmp_path):
+    bad = tmp_path / "bad.jsonl"
+    tel = _cache_tel(1, 1)
+    del tel["edge_misses"]  # B ran but a new field is missing
+    _write(str(bad), [_record("uniform", 1, 0, "SOUND_AGREE_WIN", telemetry=tel)])
+    with pytest.raises(agg.IntegrityError):
+        agg.aggregate([str(bad)])
+
+
+def test_thrown_row_missing_cache_field_ok(tmp_path):
+    # Thrown rows carry no telemetry; must not trip the strict B-ran check.
+    s0 = tmp_path / "s0.jsonl"
+    _write(str(s0), [_record("uniform", 1, 0, "THROWN",
+                             thrown={"key": "expand:ShiftViolation", "what": "boom"})])
+    rep = agg.aggregate([str(s0)])
+    assert rep["cache"]["edge_hits"] == 0

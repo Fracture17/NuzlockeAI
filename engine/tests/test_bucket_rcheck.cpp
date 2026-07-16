@@ -178,6 +178,13 @@ TEST_CASE("rcheck injected-pairs run: counts, hard_fails, JSONL shape, summary",
         REQUIRE(lines[i].contains("pipeline"));
         REQUIRE(lines[i].contains("exact"));
         REQUIRE(lines[i].contains("timing_us"));
+        // Cache/memo telemetry (Task 3): six new counters present as integers.
+        json tel = lines[i]["telemetry"];
+        for (const char* f : {"edge_hits", "edge_misses", "memo_hits",
+                              "memo_stores", "memo_suppressed", "memo_containment_missed"}) {
+            REQUIRE(tel.contains(f));
+            REQUIRE(tel[f].is_number_integer());
+        }
     }
     // Last line is the summary; bins recomputed from records must match embedded summary.
     json summary = lines[4]["summary"];
@@ -260,4 +267,17 @@ TEST_CASE("rcheck smoke corpus: real solvers, zero hard fails, consistent summar
     REQUIRE(lines.back().contains("summary"));
     REQUIRE(lines.back()["summary"]["n"] == 20);
     REQUIRE(lines.back()["summary"]["hard_fails"] == 0);
+
+    // Cache telemetry (Task 3): every B-ran+expanded matchup records edge_misses >= 1
+    // (each real expansion is inserted as an edge miss). At least one such matchup exists.
+    int b_ran_expanded = 0;
+    for (int i = 0; i < 20; ++i) {
+        json pl  = lines[i]["pipeline"];
+        json tel = lines[i]["telemetry"];
+        if (pl.value("b_ran", false) && tel["expand_calls"].get<uint64_t>() >= 1) {
+            ++b_ran_expanded;
+            REQUIRE(tel["edge_misses"].get<uint64_t>() >= 1);
+        }
+    }
+    REQUIRE(b_ran_expanded >= 1);
 }
