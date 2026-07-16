@@ -9,15 +9,18 @@
 #include "solver/action_space.h"         // legal_player_actions
 #include "solver/bucket/breakpoints.h"
 #include "solver/bucket/concede.h"       // concede_tags
+#include "solver/bucket/transition_cache.h"
 #include "solver/state_codec.h"
 #include "solver/transition_oracle.h"
 
+#include <algorithm>
 #include <chrono>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <pthread.h>
 #include <stdexcept>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -50,19 +53,38 @@ BucketKey key_of(const Bucket& b) {
 // Local tri-valued verdict for the recursion.
 enum class V { WIN, FAIL, INDET };
 
-// Per-certify-call solver state (threaded through the DFS).
+// Sentinel lowlink meaning "no on-stack ancestor referenced by this subtree".
+constexpr int kLowlinkInf = std::numeric_limits<int>::max();
+
+// One DFS return: the tri-valued verdict plus the Tarjan-style lowlink (min on-stack
+// depth referenced anywhere in the subtree, kLowlinkInf if none). See win_solver.h.
+struct DfsResult {
+    V   verdict;
+    int lowlink;
+};
+
+// Per-certify-call solver state (threaded through the DFS). The edge cache (owning the
+// oracle + interner) is external when cfg.cache is set, else privately owned.
 struct WinState {
-    TransitionOracle   oracle;
-    ContextInterner    interner;
+    TransitionCache*                 cache;        // active edge cache (external or owned)
+    std::unique_ptr<TransitionCache> owned_cache;  // non-null iff cfg.cache was null
     BreakpointRegistry registry;
     BpSet              bp;
+    uint64_t           bp_fp = 0;     // fingerprint of bp; edge-key scope (computed once)
     ExpandContext      ctx;           // one persistent context (interner mutated in place)
 
     const Question&         q;
     const BucketWinConfig&  cfg;
 
-    // Buckets currently on the recursion stack (on-stack repeat = FAIL).
-    std::unordered_set<BucketKey, BucketKeyHash> stack;
+    // Buckets currently on the recursion stack -> their depth (on-stack repeat = FAIL,
+    // with lowlink = the ancestor's depth for cycle-contamination tracking).
+    std::unordered_map<BucketKey, int, BucketKeyHash> stack;
+
+    // Per-question verdict memo: BucketKey -> win (WIN always cached; FAIL only when
+    // uncontaminated; INDET never). Dies with this certify call.
+    std::unordered_map<BucketKey, bool, BucketKeyHash> memo;
+    // Secondary index by d for the rectangle-containment counter (measurement only).
+    std::unordered_map<int32_t, std::vector<std::pair<BucketKey, bool>>> memo_by_d;
 
     // Sticky visit-cap flag: once tripped, every deeper call short-circuits to INDET.
     bool visit_cap_hit = false;
@@ -71,8 +93,33 @@ struct WinState {
 
     BucketWinResult result;
 
-    WinState(const Question& q_, const BucketWinConfig& cfg_) : q(q_), cfg(cfg_) {}
+    ContextInterner& interner() { return cache->interner; }
+
+    WinState(const Question& q_, const BucketWinConfig& cfg_) : q(q_), cfg(cfg_) {
+        if (cfg.cache) {
+            cache = cfg.cache;
+        } else {
+            owned_cache = std::make_unique<TransitionCache>();
+            cache = owned_cache.get();
+        }
+    }
 };
+
+// Assemble the edge-cache key for (bucket, action) under the current BpSet scope.
+EdgeKey make_edge_key(const BucketKey& key, uint64_t bp_fp, const ExecAction& a) {
+    EdgeKey ek{};
+    ek.bucket         = key;
+    ek.bp_fp          = bp_fp;
+    ek.kind           = a.kind;
+    ek.move_slot      = a.move_slot;
+    ek.move_override  = a.move_override;
+    ek.switch_to_slot = a.switch_to_slot;
+    ek.target_side    = a.target_side;
+    ek.target_slot    = a.target_slot;
+    ek.source_slot    = a.source_slot;
+    ek.mega           = a.mega;
+    return ek;
+}
 
 // Unpack the LO corner of a bucket into a concrete state. Legality of player actions
 // depends only on d (context), not HP, so the LO corner is a valid enumeration point.
@@ -80,7 +127,7 @@ BattleState lo_corner_state(WinState& S, const Bucket& A) {
     PackedKey k = make_packed_key(A.d(),
                                   static_cast<uint16_t>(A.player_hp().lo),
                                   static_cast<uint16_t>(A.opp_hp().lo));
-    return S.interner.unpack(k);
+    return S.interner().unpack(k);
 }
 
 void record_reason(WinState& S, BucketWinIndetReason r) {
@@ -95,85 +142,157 @@ void tally_concession(WinState& S, uint32_t tag) {
     S.result.stats.conceded_branches++;
 }
 
-V dfs(WinState& S, const Bucket& A, int depth);
+DfsResult dfs(WinState& S, const Bucket& A, int depth);
 
-// AND over one action's children; bail on the first non-WIN child (FAIL or INDET wins).
-V and_over_children(WinState& S, const ExpandResult& r, int depth) {
-    for (const ChildBucket& child : r.children) {
-        V cv = dfs(S, child.bucket, depth + 1);
-        if (cv != V::WIN) return cv;   // first non-WIN decides (INDET or FAIL)
-    }
-    return V::WIN;
+// Perform one real expansion (override seam intercepts every real expand) and accumulate
+// its work telemetry. Called only on an edge-cache MISS (or when caching is disabled).
+ExpandResult do_expand(WinState& S, const Bucket& A, const ExecAction& action) {
+    ExpandResult r = S.cfg.expand_override
+                         ? S.cfg.expand_override(A, action, S.ctx)
+                         : expand(A, action, S.ctx);
+    S.result.stats.expand_calls++;
+    S.result.stats.replays       += r.stats.replays;
+    S.result.stats.oracle_leaves += r.stats.leaves;
+    return r;
 }
 
-V dfs(WinState& S, const Bucket& A, int depth) {
+// Obtain the ExpandResult for (A, action). With edge caching on, consult/populate the
+// shared cache (hit = no real work); with it off, expand into `local`. The returned
+// pointer stays valid for the caller's use (unordered_map references are insert-stable;
+// `local` outlives the call site).
+const ExpandResult* edge_expand(WinState& S, const Bucket& A, const BucketKey& key,
+                                const ExecAction& action, ExpandResult& local) {
+    if (!S.cfg.enable_edge_cache) {
+        local = do_expand(S, A, action);
+        return &local;
+    }
+    EdgeKey ek = make_edge_key(key, S.bp_fp, action);
+    if (const ExpandResult* hit = S.cache->lookup(ek)) {
+        S.result.stats.edge_hits++;
+        return hit;   // reuse: NO real work counted
+    }
+    S.result.stats.edge_misses++;
+    ExpandResult fresh = do_expand(S, A, action);
+    S.cache->insert(ek, fresh);   // copy into cache
+    local = std::move(fresh);
+    return &local;
+}
+
+// Persist a decided verdict to the memo (+ the by-d secondary index for containment).
+void store_memo(WinState& S, const BucketKey& key, bool win) {
+    S.memo[key] = win;
+    S.memo_by_d[static_cast<int32_t>(key.d)].push_back({key, win});
+    S.result.stats.memo_stores++;
+}
+
+// Measurement only: on an exact memo miss, count queries that a rectangle-aware memo
+// WOULD have covered (a same-d cached WIN whose rectangle contains the query, or a same-d
+// cached FAIL whose rectangle is contained by the query). The verdict is NOT taken from it.
+void containment_scan(WinState& S, const BucketKey& q) {
+    auto it = S.memo_by_d.find(static_cast<int32_t>(q.d));
+    if (it == S.memo_by_d.end()) return;
+    for (const auto& [k, win] : it->second) {
+        bool covered =
+            win ? (k.pl_lo <= q.pl_lo && k.pl_hi >= q.pl_hi
+                   && k.op_lo <= q.op_lo && k.op_hi >= q.op_hi)
+                : (k.pl_lo >= q.pl_lo && k.pl_hi <= q.pl_hi
+                   && k.op_lo >= q.op_lo && k.op_hi <= q.op_hi);
+        if (covered) {
+            S.result.stats.memo_containment_missed++;
+            return;
+        }
+    }
+}
+
+// AND over one action's children: WIN iff every child WINs; the first non-WIN child
+// decides. lowlink is the min over every child actually evaluated.
+DfsResult and_over_children(WinState& S, const ExpandResult& r, int depth) {
+    int low = kLowlinkInf;
+    for (const ChildBucket& child : r.children) {
+        DfsResult cr = dfs(S, child.bucket, depth + 1);
+        low = std::min(low, cr.lowlink);
+        if (cr.verdict != V::WIN) return {cr.verdict, low};   // first non-WIN decides
+    }
+    return {V::WIN, low};
+}
+
+DfsResult dfs(WinState& S, const Bucket& A, int depth) {
     S.result.stats.buckets_visited++;
     if (depth > S.result.stats.max_depth) S.result.stats.max_depth = depth;
 
-    // Step 1: terminal classification.
-    Outcome oc = classify_bucket(A, S.q, S.interner);
+    // Step 1: terminal classification (verdict independent of depth/cycle → lowlink +INF).
+    Outcome oc = classify_bucket(A, S.q, S.interner());
     if (oc != Outcome::CONTINUE) {
         S.result.stats.terminal_buckets++;
-        return oc == Outcome::WIN ? V::WIN : V::FAIL;
+        return {oc == Outcome::WIN ? V::WIN : V::FAIL, kLowlinkInf};
     }
 
-    // Step 2: depth cap.
+    BucketKey key = key_of(A);
+
+    // Step 2: verdict memo lookup (decided entries are depth-independent → lowlink +INF).
+    if (S.cfg.enable_verdict_memo) {
+        auto it = S.memo.find(key);
+        if (it != S.memo.end()) {
+            S.result.stats.memo_hits++;
+            return {it->second ? V::WIN : V::FAIL, kLowlinkInf};
+        }
+        containment_scan(S, key);   // exact miss → measure rectangle coverage
+    }
+
+    // Step 3: depth cap.
     if (depth >= S.cfg.depth_cap) {
         record_reason(S, BucketWinIndetReason::DepthCap);
-        return V::INDET;
+        return {V::INDET, kLowlinkInf};
     }
 
-    // Step 3: on-stack repeated bucket → FAIL (amendment 16(a)).
-    BucketKey key = key_of(A);
-    if (S.stack.count(key)) return V::FAIL;
+    // Step 4: on-stack repeated bucket → FAIL (amendment 16(a)); lowlink = ancestor depth.
+    if (auto sit = S.stack.find(key); sit != S.stack.end()) {
+        return {V::FAIL, sit->second};
+    }
 
-    // Step 4: sticky visit cap → INDET.
+    // Step 5: sticky visit cap → INDET.
     if (S.visit_cap_hit || S.result.stats.buckets_visited > S.cfg.visit_cap) {
         S.visit_cap_hit = true;
         record_reason(S, BucketWinIndetReason::VisitCap);
-        return V::INDET;
+        return {V::INDET, kLowlinkInf};
     }
 
-    S.stack.insert(key);
+    S.stack.emplace(key, depth);
 
-    // Step 5: enumerate legal player actions from the LO corner, filtered by the Question.
+    // Step 6: enumerate legal player actions from the LO corner, filtered by the Question.
     BattleState lo_state = lo_corner_state(S, A);
     std::vector<ExecAction> actions = legal_player_actions(lo_state);
 
     bool any_indet = false;
-    V bucket_verdict = V::FAIL;
+    V    bucket_verdict = V::FAIL;
+    int  node_lowlink   = kLowlinkInf;
 
-    // Step 6/7: OR over actions.
+    // Step 7: OR over actions.
     for (const ExecAction& action : actions) {
         if (!action_filter(S.q, action)) continue;
 
-        ExpandResult r = S.cfg.expand_override
-                             ? S.cfg.expand_override(A, action, S.ctx)
-                             : expand(A, action, S.ctx);
+        ExpandResult local;
+        const ExpandResult* r = edge_expand(S, A, key, action, local);
 
-        // Aggregate telemetry.
-        S.result.stats.expand_calls++;
-        S.result.stats.replays      += r.stats.replays;
-        S.result.stats.oracle_leaves += r.stats.leaves;
-
-        if (r.concession_tag != 0) {
-            tally_concession(S, r.concession_tag);
+        if (r->concession_tag != 0) {
+            tally_concession(S, r->concession_tag);
             continue;   // conceded action FAILs definitively
         }
 
-        if (r.children.empty()) {
+        if (r->children.empty()) {
             // Non-conceded expansion must yield at least one child (fail loud).
             throw std::logic_error(
                 "bucket_win_certify: expand produced no children with concession_tag=0");
         }
 
-        V av = and_over_children(S, r, depth);
-        if (av == V::WIN) {
+        DfsResult av = and_over_children(S, *r, depth);
+        node_lowlink = std::min(node_lowlink, av.lowlink);
+        if (av.verdict == V::WIN) {
             bucket_verdict = V::WIN;
             S.result.policy[key] = action;
             break;   // OR: first winning action suffices
         }
-        if (av == V::INDET) any_indet = true;
+        if (av.verdict == V::INDET) any_indet = true;
         // FAIL action: keep trying other actions.
     }
 
@@ -181,8 +300,23 @@ V dfs(WinState& S, const Bucket& A, int depth) {
 
     // Step 7 resolution: WIN if any action won; else INDET if any action was
     // indeterminate; else FAIL (all actions FAILed definitively).
-    if (bucket_verdict == V::WIN) return V::WIN;
-    return any_indet ? V::INDET : V::FAIL;
+    V verdict = bucket_verdict == V::WIN ? V::WIN
+              : any_indet             ? V::INDET
+                                      : V::FAIL;
+
+    // Memoize: WIN always; FAIL iff uncontaminated by an on-stack cycle; INDET never.
+    if (S.cfg.enable_verdict_memo) {
+        if (verdict == V::WIN) {
+            store_memo(S, key, true);
+        } else if (verdict == V::FAIL) {
+            if (node_lowlink >= depth) store_memo(S, key, false);
+            else S.result.stats.memo_suppressed++;
+        }
+    }
+
+    // A WIN proof is independent of any pruned contaminated branch → +INF upward.
+    int out_lowlink = verdict == V::WIN ? kLowlinkInf : node_lowlink;
+    return {verdict, out_lowlink};
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +333,7 @@ struct WinThreadArgs {
 void* win_thread_fn(void* arg) {
     auto* a = static_cast<WinThreadArgs*>(arg);
     try {
-        a->result = dfs(*a->S, *a->root, 0);
+        a->result = dfs(*a->S, *a->root, 0).verdict;
     } catch (...) {
         a->exception = std::current_exception();
     }
@@ -231,10 +365,12 @@ BucketWinResult bucket_win_certify(const BattleState& initial_state, const Quest
 
     auto S = std::make_unique<WinState>(q, cfg);
 
-    // Instantiate the breakpoint set and wire the persistent ExpandContext.
-    S->bp = S->registry.instantiate(initial_state, q);
-    S->ctx.oracle   = &S->oracle;
-    S->ctx.interner = &S->interner;
+    // Instantiate the breakpoint set and wire the persistent ExpandContext to the cache's
+    // oracle + interner. bp_fp scopes edge-cache keys and is computed once per certify.
+    S->bp    = S->registry.instantiate(initial_state, q);
+    S->bp_fp = bp_fingerprint(S->bp);
+    S->ctx.oracle   = &S->cache->oracle;
+    S->ctx.interner = &S->cache->interner;
     S->ctx.bp       = &S->bp;
     S->ctx.concede  = concede_tags;
     S->ctx.options  = ExpandOptions{};
@@ -242,7 +378,7 @@ BucketWinResult bucket_win_certify(const BattleState& initial_state, const Quest
     // Root bucket: singleton HP intervals at the concrete initial HP. d = context id;
     // support_fp is the canonical support fingerprint (MUST pair pack + support per
     // expand.h). support_fingerprint over cpp_compute_action_probabilities(state, 1).
-    PackedKey root_key = S->interner.pack(initial_state);
+    PackedKey root_key = S->cache->interner.pack(initial_state);
     uint32_t  root_d   = ctx_id_of(root_key);
     int32_t   pl_hp    = pl_hp_of(root_key);
     int32_t   op_hp    = opp_hp_of(root_key);

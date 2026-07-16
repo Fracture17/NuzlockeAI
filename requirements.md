@@ -2370,3 +2370,38 @@ file = "engine/src/solver/audit/rcheck_core.cpp"
 confidence = "settled"
 rationale = "9-bin taxonomy; THROWN precedes referee check; REFEREE_INDET counted, excluded from soundness evidence; UNKNOWN+exact-LOSS = SOUND conservatism; CONSERVATIVE_UNTAGGED sub-split by B reason (cap != modeling gap). Referee budgets = CLI flags."
 updated = "2026-07-16T03:58:08.096Z"
+
+[[record]]
+name = "transition_cache_next_priority"
+file = "engine/src/solver/bucket/"
+confidence = "requirement"
+rationale = "USER 2026-07-16: transition-edge caching (DAG search) is the FIRST post-gate task - speed unjudgeable and deep matchups unverifiable without it. Design: (bucket,action)->ExpandResult edge cache (question-independent) + per-question verdict memo."
+updated = "2026-07-16T07:01:46.560Z"
+
+[[record]]
+name = "memo_lowlink_cycle_safety"
+file = "engine/src/solver/bucket/win_solver.cpp"
+confidence = "settled"
+rationale = "Verdict memo: on-stack repeat FAILs w/ lowlink=ancestor depth; node memoizes FAIL only if subtree lowlink>=own depth (else suppressed); WIN always memoized, propagates +INF; INDET never. Keeps 16(a) sound under DAG revisits."
+updated = "2026-07-16T16:50:07.818Z"
+
+[[record]]
+name = "edge_cache_owns_interner"
+file = "engine/src/solver/bucket/transition_cache.h"
+confidence = "settled"
+rationale = "TransitionCache owns oracle+ContextInterner: cached child d only valid under that interner. Entries scoped by bp_fp (BpSet folds Question HP thresholds; edges question-independent only modulo grid). Override-fed caches never reused for real runs."
+updated = "2026-07-16T16:50:29.516Z"
+
+[[record]]
+name = "memo_exact_key_v1"
+file = "engine/src/solver/bucket/win_solver.cpp"
+confidence = "requirement"
+rationale = "USER 2026-07-16: verdict memo is exact-BucketKey v1; containment matching (WIN-superset/FAIL-subset hits, both sound) deferred until memo_containment_missed sizes the gap on corpus. Grid-cell widening noted as max-hit option w/ false LOSSes."
+updated = "2026-07-16T16:50:46.296Z"
+
+[[record]]
+name = "pp_canon_measure_first"
+file = "engine/src/solver/bucket/win_solver.cpp"
+confidence = "requirement"
+rationale = "USER 2026-07-16: measure cache w/ full PP-in-d first, but 'we will probably have to switch' to PP tracked only for cycle-capable moves (heal/Harvest/Leftovers; Splash via self-cycle check) + total-PP turn cap. Full PP hides cycles + fragments reuse."
+updated = "2026-07-16T16:51:04.096Z"

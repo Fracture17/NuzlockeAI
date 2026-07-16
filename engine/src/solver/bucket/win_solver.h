@@ -3,6 +3,20 @@
 // "not proven WIN" (includes concessions), never a LOSS certificate; INDETERMINATE marks
 // depth/visit-cap exhaustion. On-stack repeated bucket = FAIL (amendment 16(a)). DFS runs
 // on a dedicated 256 MB pthread; any exception is captured and rethrown on the caller.
+//
+// Caching (plan Tasks 1-2):
+//  - Edge cache: a question-independent (bucket, action) -> ExpandResult store (the
+//    TransitionCache, which also owns the oracle + ContextInterner). Reused across certify
+//    calls when cfg.cache is set. An edge hit reuses a prior expansion and counts NO real
+//    work (expand_calls / replays / oracle_leaves unchanged).
+//  - Verdict memo: a per-certify BucketKey -> win map (dies with the call). WIN is memoized
+//    unconditionally. FAIL is memoized ONLY when uncontaminated by an on-stack cycle, via a
+//    Tarjan-lowlink test: an on-stack repeat returns FAIL with lowlink = the ancestor's
+//    depth; a node at depth d memoizes FAIL iff its subtree's min referenced on-stack depth
+//    (lowlink) >= d (a FAIL that reached above this node is only "not-proven-here" and must
+//    NOT be cached). A WIN node propagates lowlink = +INF upward: its proof is independent
+//    of any pruned contaminated branch. INDETERMINATE is NEVER memoized. This preserves the
+//    on-stack-FAIL semantics (amendment 16(a)) while making DAG revisits cheap and sound.
 #pragma once
 #ifndef NUZLOCKE_SOLVER_BUCKET_WIN_SOLVER_H
 #define NUZLOCKE_SOLVER_BUCKET_WIN_SOLVER_H
@@ -44,11 +58,19 @@ struct BucketKeyHash {
 // Test-only expand seam. When null, bucket_win_certify calls the real expand().
 using ExpandFn = std::function<ExpandResult(const Bucket&, const ExecAction&, ExpandContext&)>;
 
+// Question-independent (bucket, action) -> ExpandResult edge cache (see transition_cache.h).
+class TransitionCache;
+
 struct BucketWinConfig {
     int      depth_cap  = 500;
     uint64_t visit_cap  = 1'000'000;
     std::size_t stack_size = 256ull * 1024 * 1024;
     ExpandFn expand_override;   // TEST ONLY — bypasses real expand()
+    // Shared edge cache across certify calls. Null => certify builds a private local cache
+    // (owning the oracle + interner for this call only).
+    TransitionCache* cache               = nullptr;
+    bool             enable_edge_cache   = true;
+    bool             enable_verdict_memo = true;
 };
 
 struct BucketWinStats {
@@ -60,6 +82,13 @@ struct BucketWinStats {
     uint64_t conceded_branches = 0;
     int      max_depth         = 0;
     uint64_t elapsed_us        = 0;
+    // Edge-cache + verdict-memo telemetry (plan Tasks 1-2).
+    uint64_t edge_hits               = 0;  // cached expansions reused (no real work)
+    uint64_t edge_misses             = 0;  // real expansions performed + inserted
+    uint64_t memo_hits               = 0;  // decided verdicts served from the memo
+    uint64_t memo_stores             = 0;  // verdicts written to the memo
+    uint64_t memo_suppressed         = 0;  // FAIL verdicts withheld (cycle-contaminated)
+    uint64_t memo_containment_missed = 0;  // exact-miss queries a rectangle memo would cover
 };
 
 struct BucketWinResult {
