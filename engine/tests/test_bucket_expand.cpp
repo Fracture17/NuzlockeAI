@@ -463,16 +463,10 @@ TEST_CASE("expand: bucket straddling AI support flip throws SupportFlip",
                                 .move0=MV_TACKLE, .move1=MV_ICY_WIND});
     BattleState s_probe = make_state(p, o);
 
-    // Scan player HP 1..max looking for an adjacent flip pair where neither endpoint
-    // coincides with a breakpoint. Any surviving flip is a valid test vector.
-    BreakpointRegistry reg;
-    BpSet bp = reg.instantiate(s_probe, default_question());
-    auto is_bp = [&](int32_t hp) {
-        return std::find(bp.player_breakpoints().begin(),
-                         bp.player_breakpoints().end(), hp)
-               != bp.player_breakpoints().end();
-    };
-
+    // Scan player HP 1..max for the first adjacent AI-support flip. Task 9 now captures
+    // every genuine flip as a breakpoint, so to exercise expand's runtime support gate
+    // as a SAFETY NET we deliberately hand it a BpSet that OMITS this breakpoint
+    // (simulating a registry miss); the gate must still catch the flip at expand time.
     int32_t flip_lo = -1, flip_hi = -1;
     uint64_t prev_fp = 0;
     bool have_prev = false;
@@ -481,7 +475,7 @@ TEST_CASE("expand: bucket straddling AI support flip throws SupportFlip",
         st.side0.team[0].hp = hp;
         std::vector<ActionProb> probs = cpp_compute_action_probabilities(st, 1);
         uint64_t fp = support_fingerprint(probs);
-        if (have_prev && fp != prev_fp && !is_bp(hp) && !is_bp(hp - 1)) {
+        if (have_prev && fp != prev_fp) {
             flip_lo = hp - 1;
             flip_hi = hp;
             break;
@@ -498,6 +492,9 @@ TEST_CASE("expand: bucket straddling AI support flip throws SupportFlip",
     BattleState s = s_probe;
     s.side0.team[0].hp = flip_hi;
     ExpandFixture fx(s, default_question());
+    // Overwrite with a minimal BpSet that omits the flip breakpoint so the straddling
+    // bucket is interior-breakpoint-free by construction and reaches expand's gate.
+    fx.bp = BpSet(std::vector<int32_t>{0, 200}, std::vector<int32_t>{0, 200}, 200, 200);
 
     // Manually construct a bucket over the flip range using the LO support fingerprint
     // (matches what a root-bucket builder would compute at flip_lo). This must be a
@@ -597,9 +594,13 @@ TEST_CASE("expand: kill-saturating opp interval splits into faint + alive childr
 
     ExpandFixture fx(s, default_question());
     ExecAction pa = player_move_action(0);
-    // Opp interval [5,60] — Tackle at ~10..18 dmg guarantees some kills and some
-    // survivors within the range.
-    Bucket A = bucket_from(s, HpInterval{150, 200}, HpInterval{5, 60},
+    // Task 9 adds a PlayerKoEstimate breakpoint on the opp axis at the player's KO
+    // threshold (= max-roll Tackle damage). Keep the opp interval just below that so it
+    // is interior-breakpoint-free yet still straddles the per-roll faint boundary
+    // (max roll KOs the hi endpoint, low rolls leave it alive).
+    int32_t opp_hi = 60;
+    for (int32_t b : fx.bp.opp_breakpoints()) { if (b > 5) { opp_hi = b - 1; break; } }
+    Bucket A = bucket_from(s, HpInterval{150, 200}, HpInterval{5, opp_hi},
                            fx.bp, fx.interner);
 
     ExpandResult r = expand(A, pa, fx.ctx);
@@ -625,7 +626,11 @@ TEST_CASE("expand: kill-saturating interval WITHOUT derived splits throws",
     ExpandOptions opts; opts.skip_derived_splits = true;
     ExpandFixture fx(s, default_question(), opts);
     ExecAction pa = player_move_action(0);
-    Bucket A = bucket_from(s, HpInterval{150, 200}, HpInterval{5, 60},
+    // Keep the opp interval below the Task-9 PlayerKoEstimate breakpoint (see companion
+    // test above) so it stays interior-breakpoint-free while still kill-saturating.
+    int32_t opp_hi = 60;
+    for (int32_t b : fx.bp.opp_breakpoints()) { if (b > 5) { opp_hi = b - 1; break; } }
+    Bucket A = bucket_from(s, HpInterval{150, 200}, HpInterval{5, opp_hi},
                            fx.bp, fx.interner);
 
     REQUIRE_THROWS_AS(expand(A, pa, fx.ctx), ExpandError);

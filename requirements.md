@@ -2335,3 +2335,24 @@ file = "engine/src/solver/bucket/breakpoints.cpp"
 confidence = "settled"
 rationale = "Form-change abilities {211,208,197,161,241} THROW runtime_error containing 'form-change' at instantiate (14 #8): loud beats silent thresholds whose max_hp rescale Expand cannot honor. Struggle delta omitted (PP=40 corpus; loud throw if reached)."
 updated = "2026-07-15T21:23:55.224Z"
+
+[[record]]
+name = "ai_bp_scorer_blind_fixed_dmg"
+file = "engine/src/solver/bucket/ai_breakpoints.cpp"
+confidence = "settled"
+rationale = "PlayerKoEstimate SKIPS base_power==0 player moves: the scorer threat loops (ai_scorer_internal.h:333/347/371) continue on base_power==0, so the AI is BLIND to fixed-damage player moves. Do NOT fix to emit level damage - no flip, no breakpoint needed."
+updated = "2026-07-16T03:07:08.241Z"
+
+[[record]]
+name = "ai_bp_root_d_only"
+file = "engine/src/solver/bucket/ai_breakpoints.cpp"
+confidence = "settled"
+rationale = "AI breakpoints derive from the ROOT d only; d-drift flips stay accepted SupportFlip throws (rcheck census sizes them). Per-move player estimates (not just max) emitted to survive PP exhaustion. Refinement = per-d recomputation (module is per-state)."
+updated = "2026-07-16T03:07:14.506Z"
+
+[[record]]
+name = "ai_bp_estimates_and_throws"
+file = "engine/src/solver/bucket/ai_breakpoints.cpp"
+confidence = "settled"
+rationale = "Estimates via ai_damage functions with the scorer's own LuckProfiles on state copies; pct thresholds by flip-pair bisection over verbatim expressions (both values). Throws ai-final-gambit (two-axis diagonal) and ai-bench (switch scoring), postponed."
+updated = "2026-07-16T03:07:24.122Z"

@@ -3,6 +3,7 @@
 // boundaries. Fails loud when hp_thresholds() reports residual_unknown.
 #include "solver/bucket/breakpoints.h"
 
+#include "solver/bucket/ai_breakpoints.h"
 #include "solver/engine_queries.h"
 
 #include "damage.h"              // cpp_effective_stat
@@ -312,6 +313,12 @@ static std::vector<int32_t> seed_axis(const BattleState& state, int side,
 
     // Task 8: per-mechanic registry entries (§4-§9). May throw "form-change".
     for (const BpEntry& e : registry_static_entries(state, side)) {
+        bps.push_back(e.hp);
+    }
+
+    // Task 9: AI-scorer support breakpoints (AI is side 1). May throw
+    // "ai-final-gambit" / "ai-bench". Values outside [0,max_hp] are dropped by normalize.
+    for (const AiBpEntry& e : ai_breakpoint_entries(state, side)) {
         bps.push_back(e.hp);
     }
 

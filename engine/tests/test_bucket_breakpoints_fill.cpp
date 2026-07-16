@@ -488,7 +488,9 @@ TEST_CASE("breakpoints fill: Schooling holder throws form-change from instantiat
 TEST_CASE("breakpoints fill: clean mon yields exactly {0, max_hp}",
           "[bucket][breakpoints][fill]") {
     PokemonState p = make_mon(1, 200, 200, 0, 0);
-    PokemonState o = make_mon(2, 200, 200, 0, 0, 60);
+    // Opponent has no damaging move so no Task-9 AI roll-value breakpoints land on the
+    // player axis; this keeps the assertion focused on player-side registry cleanliness.
+    PokemonState o = make_mon(2, 200, 200, 0, 0, 60, /*move0=*/0);
     BattleState s = make_state(p, o);
 
     BreakpointRegistry reg;

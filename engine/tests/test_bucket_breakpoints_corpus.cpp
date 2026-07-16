@@ -75,6 +75,8 @@ TEST_CASE("breakpoints corpus sweep: instantiate() lands in an allowed outcome b
     int success_count = 0;
     int residual_unknown_count = 0;
     int form_change_count = 0;
+    int ai_final_gambit_count = 0;
+    int ai_bench_count = 0;
     int total = 0;
 
     for (int c = 0; c < 3; ++c) {
@@ -93,6 +95,10 @@ TEST_CASE("breakpoints corpus sweep: instantiate() lands in an allowed outcome b
                     ++residual_unknown_count;
                 } else if (msg.find("form-change") != std::string::npos) {
                     ++form_change_count;
+                } else if (msg.find("ai-final-gambit") != std::string::npos) {
+                    ++ai_final_gambit_count;
+                } else if (msg.find("ai-bench") != std::string::npos) {
+                    ++ai_bench_count;
                 } else {
                     FAIL("unexpected runtime_error (class=" << class_names[c]
                          << " idx=" << i << "): " << msg);
@@ -102,13 +108,16 @@ TEST_CASE("breakpoints corpus sweep: instantiate() lands in an allowed outcome b
     }
 
     REQUIRE(total == 1500);
-    REQUIRE(success_count + residual_unknown_count + form_change_count == total);
+    REQUIRE(success_count + residual_unknown_count + form_change_count
+            + ai_final_gambit_count + ai_bench_count == total);
 
     WARN("=== Breakpoint corpus sweep ===");
     WARN("  total=" << total
          << " success=" << success_count
          << " residual_unknown=" << residual_unknown_count
-         << " form_change=" << form_change_count);
+         << " form_change=" << form_change_count
+         << " ai_final_gambit=" << ai_final_gambit_count
+         << " ai_bench=" << ai_bench_count);
 }
 
 TEST_CASE("residual delta corpus sweep: residual_delta_candidates never throws, always includes 0",
