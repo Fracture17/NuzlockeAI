@@ -40,7 +40,10 @@
 
 #include "state.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <unordered_map>
+#include <vector>
 
 // Out-of-band non-zero PP sentinel: >= 3 and above any real move's max PP.
 constexpr int32_t kPpSentinel = 99;
@@ -65,5 +68,77 @@ void canonicalize_pp(BattleState& s);
 // Sum of REAL nonzero PP across all move slots on both sides plus +8 slack. Call on the
 // REAL (pre-canonicalization) state; used as an insurance depth cap in canonical space.
 int32_t pp_horizon(const BattleState& s);
+
+// ---------------------------------------------------------------------------
+// Certificate PP-use audit (PP-canon Task 3).
+//
+// A canonical WIN may over-use a masked slot beyond its REAL PP: the turn cap bounds the
+// certificate's LENGTH, not per-slot use. After a WIN is proven, the winning certificate
+// (a DAG) is audited: the MAX path-wise consumption of every masked slot must stay strictly
+// below that slot's real root PP (never reaching 0 — the post-exhaustion {0,>0} profile flip
+// changes AI support/legality/Leppa). See pp_cert_audit_soundness. Cycle-capable slots keep
+// real PP in canonical space and are exempt.
+//
+// The DP below runs over a struct-based certificate DAG (win_solver builds it from policy +
+// edge cache). Consumption is path-wise: a node's per-slot value = own action cost + per-slot
+// MAX over its children (RNG/adversarial AND-children are alternatives — the realized line
+// takes one path, so children contribute a MAX, not a sum).
+// ---------------------------------------------------------------------------
+
+// One move slot to audit: side (0=player, 1=opponent), team index, move slot 0..3.
+struct PpSlotKey {
+    int32_t side;
+    int32_t mon;
+    int32_t slot;
+    bool operator==(const PpSlotKey& o) const {
+        return side == o.side && mon == o.mon && slot == o.slot;
+    }
+};
+
+struct PpSlotKeyHash {
+    std::size_t operator()(const PpSlotKey& k) const;
+};
+
+// Max consumption per slot over the certificate.
+using PpConsumption = std::unordered_map<PpSlotKey, int32_t, PpSlotKeyHash>;
+
+// One AND-child of a certificate node: the opponent's action consumption on that branch plus
+// the child subtree. child < 0 marks a terminal-WIN leaf (no further node).
+struct PpCertEdge {
+    PpSlotKey opp_slot;
+    int32_t   opp_cost;   // 0 (switch/struggle/recharge), 1, or 2 (opposing Pressure)
+    int       child = -1; // index into PpCertGraph::nodes, or < 0 for a terminal leaf
+};
+
+// One non-terminal WIN bucket: the player's action consumption plus its AND-children.
+struct PpCertNode {
+    PpSlotKey               player_slot;
+    int32_t                 player_cost = 0;  // 0, 1, or 2 (opposing Pressure)
+    std::vector<PpCertEdge> children;
+};
+
+// Certificate DAG. Diamonds share a node index; nodes are stored children-before-parent, so
+// root is normally the last-appended node (win_solver sets it explicitly).
+struct PpCertGraph {
+    std::vector<PpCertNode> nodes;
+    int root = 0;
+};
+
+// Max path-wise consumption per slot over the DAG rooted at graph.root. Memoizes per node
+// (DAG diamonds are visited once). THROWS std::logic_error on a cycle (an impossible-if-sound
+// WIN certificate — fail loud). Returns empty for an empty graph.
+PpConsumption pp_max_consumption(const PpCertGraph& graph);
+
+// Real root PP + move id for one audited slot, snapshotted from the REAL pre-canon state.
+struct PpRootSlot {
+    int32_t real_pp;
+    int32_t move_id;
+};
+using PpRootPp = std::unordered_map<PpSlotKey, PpRootSlot, PpSlotKeyHash>;
+
+// True iff every masked (non-cycle-capable) slot's consumption is STRICTLY below its real root
+// PP (for slots with real PP > 0). Cycle-capable slots are exempt (real PP kept in canonical
+// space). THROWS std::logic_error if a consumed slot is absent from the root snapshot.
+bool pp_cert_audit_ok(const PpConsumption& consumption, const PpRootPp& root_pp);
 
 #endif // NUZLOCKE_SOLVER_BUCKET_PP_CANON_H

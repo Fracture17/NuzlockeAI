@@ -6,10 +6,11 @@
 #include "solver/bucket/win_solver.h"
 
 #include "ai_analytic.h"                 // cpp_compute_action_probabilities
+#include "effects_consts.h"              // AB_PRESSURE
 #include "solver/action_space.h"         // legal_player_actions
 #include "solver/bucket/breakpoints.h"
 #include "solver/bucket/concede.h"       // concede_tags
-#include "solver/bucket/pp_canon.h"      // canonicalize_pp, pp_horizon (Task 2)
+#include "solver/bucket/pp_canon.h"      // canonicalize_pp, pp_horizon, cert audit (Tasks 2-3)
 #include "solver/bucket/transition_cache.h"
 #include "solver/state_codec.h"
 #include "solver/transition_oracle.h"
@@ -22,6 +23,7 @@
 #include <pthread.h>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -328,12 +330,128 @@ DfsResult dfs(WinState& S, const Bucket& A, int depth) {
 }
 
 // ---------------------------------------------------------------------------
+// Certificate PP-use audit (PP-canon Task 3). After a WIN, walk the winning certificate
+// (policy action -> edge-cache children -> non-terminal child buckets) into a PpCertGraph,
+// then require every masked slot's max path-wise consumption strictly below its real root
+// PP. A violation downgrades WIN to INDETERMINATE(PpAuditFail). Runs on the DFS worker
+// thread (its dedicated stack) so the recursive walk cannot overflow the caller stack.
+// ---------------------------------------------------------------------------
+
+// Consumption cost of one action on its own slot: 0 for switch / Struggle / recharge
+// (move_slot < 0), else 1, doubled to 2 when the OPPOSING active mon has Pressure.
+int32_t action_pp_cost(const ExecAction& a, bool opposing_pressure) {
+    if (a.kind != 0 || a.move_slot < 0) return 0;   // kind 0 = MOVE
+    return opposing_pressure ? 2 : 1;
+}
+
+// Snapshot real (pre-canon) PP + move id for every move slot of every mon on both sides.
+PpRootPp snapshot_root_pp(const BattleState& s) {
+    PpRootPp out;
+    auto add_side = [&](const SideState& side, int32_t side_idx) {
+        for (std::size_t mon = 0; mon < side.team.size(); ++mon) {
+            const PokemonState& m = side.team[mon];
+            const int32_t ids[4] = {m.move_id0, m.move_id1, m.move_id2, m.move_id3};
+            const int32_t pps[4] = {m.move_pp0, m.move_pp1, m.move_pp2, m.move_pp3};
+            for (int32_t slot = 0; slot < 4; ++slot)
+                out[PpSlotKey{side_idx, static_cast<int32_t>(mon), slot}] =
+                    PpRootSlot{pps[slot], ids[slot]};
+        }
+    };
+    add_side(s.side0, 0);
+    add_side(s.side1, 1);
+    return out;
+}
+
+// Obtain the ExpandResult for (A, action) during the audit walk WITHOUT perturbing search
+// telemetry: an edge-cache hit reuses the search's expansion; a miss (edge caching disabled
+// or an override bypassed the cache) re-expands and is counted in audit_expands.
+const ExpandResult* audit_edge(WinState& S, const Bucket& A, const BucketKey& key,
+                               const ExecAction& action, ExpandResult& local) {
+    if (S.cfg.enable_edge_cache) {
+        EdgeKey ek = make_edge_key(key, S.bp_fp, action);
+        if (const ExpandResult* hit = S.cache->lookup(ek)) return hit;
+    }
+    local = S.cfg.expand_override ? S.cfg.expand_override(A, action, S.ctx)
+                                  : expand(A, action, S.ctx);
+    S.result.stats.audit_expands++;
+    return &local;
+}
+
+// Build (memoized) the certificate DAG node for WIN bucket A. THROWS std::logic_error on an
+// on-stack revisit (a cycle in a WIN certificate is impossible if sound — fail loud); a
+// cross-branch revisit (DAG diamond) returns the already-built node index.
+int build_cert_node(WinState& S, PpCertGraph& g,
+                    std::unordered_map<BucketKey, int, BucketKeyHash>& built,
+                    std::unordered_set<BucketKey, BucketKeyHash>& on_stack,
+                    const Bucket& A) {
+    BucketKey key = key_of(A);
+    if (on_stack.count(key))
+        throw std::logic_error("bucket_win_certify: cycle in WIN certificate during PP audit");
+    if (auto it = built.find(key); it != built.end()) return it->second;
+
+    auto pit = S.result.policy.find(key);
+    if (pit == S.result.policy.end())
+        throw std::logic_error(
+            "bucket_win_certify: WIN certificate node missing a policy entry during PP audit");
+    const ExecAction& action = pit->second;
+
+    on_stack.insert(key);
+
+    // Unpack the bucket's LO corner to read active mon indices + Pressure on both sides.
+    BattleState st = S.interner().unpack(make_packed_key(
+        key.d, static_cast<uint16_t>(key.pl_lo), static_cast<uint16_t>(key.op_lo)));
+    int32_t pl_active = st.side0.active_indices[0];
+    int32_t op_active = st.side1.active_indices[0];
+    bool op_pressure = st.side1.team[op_active].ability == eff::AB_PRESSURE;
+    bool pl_pressure = st.side0.team[pl_active].ability == eff::AB_PRESSURE;
+
+    PpCertNode node;
+    node.player_slot = PpSlotKey{0, pl_active, action.move_slot};
+    node.player_cost = action_pp_cost(action, op_pressure);
+
+    ExpandResult local;
+    const ExpandResult* r = audit_edge(S, A, key, action, local);
+    for (const ChildBucket& child : r->children) {
+        PpCertEdge e;
+        e.opp_slot = PpSlotKey{1, op_active, child.ai_action.move_slot};
+        e.opp_cost = action_pp_cost(child.ai_action, pl_pressure);
+        Outcome oc = classify_bucket(child.bucket, S.q, S.interner());
+        e.child = (oc == Outcome::WIN) ? -1   // terminal WIN leaf: stop recursion
+                                       : build_cert_node(S, g, built, on_stack, child.bucket);
+        node.children.push_back(e);
+    }
+
+    on_stack.erase(key);
+    int idx = static_cast<int>(g.nodes.size());
+    g.nodes.push_back(std::move(node));
+    built[key] = idx;
+    return idx;
+}
+
+// Audit the WIN certificate rooted at `root`. Returns true iff the WIN survives (every masked
+// slot's max consumption strictly below its real root PP). real_state is the pre-canon state.
+bool pp_cert_audit(WinState& S, const Bucket& root, const BattleState& real_state) {
+    // A non-terminal WIN root always carries a policy entry; without one there is nothing
+    // consumed to audit.
+    if (!S.result.policy.count(key_of(root))) return true;
+
+    PpCertGraph g;
+    std::unordered_map<BucketKey, int, BucketKeyHash> built;
+    std::unordered_set<BucketKey, BucketKeyHash> on_stack;
+    g.root = build_cert_node(S, g, built, on_stack, root);
+
+    PpConsumption consumption = pp_max_consumption(g);
+    return pp_cert_audit_ok(consumption, snapshot_root_pp(real_state));
+}
+
+// ---------------------------------------------------------------------------
 // Dedicated-stack pthread trampoline (bsolver pattern).
 // ---------------------------------------------------------------------------
 
 struct WinThreadArgs {
     WinState*          S;
     const Bucket*      root;
+    const BattleState* real_state = nullptr;  // pre-canon state for the PP audit
     V                  result    = V::FAIL;
     std::exception_ptr exception = nullptr;
 };
@@ -342,6 +460,14 @@ void* win_thread_fn(void* arg) {
     auto* a = static_cast<WinThreadArgs*>(arg);
     try {
         a->result = dfs(*a->S, *a->root, 0).verdict;
+        // Certificate PP-use audit (Task 3): a masked-slot over-use downgrades WIN to
+        // INDETERMINATE(PpAuditFail). Policy is deliberately left intact for diagnostics.
+        if (a->result == V::WIN && a->S->cfg.enable_pp_canon
+            && !pp_cert_audit(*a->S, *a->root, *a->real_state)) {
+            a->S->result.stats.pp_audit_rejects = 1;
+            a->S->first_reason = BucketWinIndetReason::PpAuditFail;
+            a->result = V::INDET;
+        }
     } catch (...) {
         a->exception = std::current_exception();
     }
@@ -414,8 +540,9 @@ BucketWinResult bucket_win_certify(const BattleState& initial_state, const Quest
 
     // Run the DFS on a dedicated-stack thread; measure wall-clock across spawn/join.
     WinThreadArgs args;
-    args.S    = S.get();
-    args.root = &root;
+    args.S          = S.get();
+    args.root       = &root;
+    args.real_state = &initial_state;
 
     auto t0 = std::chrono::steady_clock::now();
 

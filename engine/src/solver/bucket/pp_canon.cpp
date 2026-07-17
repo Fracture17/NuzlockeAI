@@ -1,5 +1,9 @@
-// PP canonicalization: masked-slot PP rewrite + cycle-capable classification + PP horizon.
+// PP canonicalization: masked-slot PP rewrite + cycle-capable classification + PP horizon,
+// plus the certificate PP-use audit DP (Task 3).
 #include "solver/bucket/pp_canon.h"
+
+#include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -74,4 +78,82 @@ int32_t pp_horizon(const BattleState& s) {
     for (const auto& m : s.side0.team) total += mon_pp_sum(m);
     for (const auto& m : s.side1.team) total += mon_pp_sum(m);
     return total + 8;
+}
+
+// ---------------------------------------------------------------------------
+// Certificate PP-use audit DP (Task 3).
+// ---------------------------------------------------------------------------
+
+std::size_t PpSlotKeyHash::operator()(const PpSlotKey& k) const {
+    std::size_t h = 1469598103934665603ULL;
+    auto mix = [&](uint32_t v) { h ^= v; h *= 1099511628211ULL; };
+    mix(static_cast<uint32_t>(k.side));
+    mix(static_cast<uint32_t>(k.mon));
+    mix(static_cast<uint32_t>(k.slot));
+    return h;
+}
+
+namespace {
+
+// Add `src` into `dst` slot-wise (sequential consumption along one path).
+void add_into(PpConsumption& dst, const PpConsumption& src) {
+    for (const auto& [slot, v] : src) dst[slot] += v;
+}
+
+// Take the slot-wise MAX of `src` into `dst` (alternative AND-children — the realized line
+// takes one path, so children contribute a max rather than a sum).
+void max_into(PpConsumption& dst, const PpConsumption& src) {
+    for (const auto& [slot, v] : src) {
+        auto it = dst.find(slot);
+        if (it == dst.end() || v > it->second) dst[slot] = v;
+    }
+}
+
+// Recursive DP with a 3-color cycle guard. color: 0=unseen, 1=on-path, 2=done.
+const PpConsumption& visit_node(const PpCertGraph& g, int i,
+                                std::vector<int>& color,
+                                std::vector<PpConsumption>& memo) {
+    if (color[i] == 2) return memo[i];
+    if (color[i] == 1)
+        throw std::logic_error("pp_max_consumption: cycle in certificate DAG");
+    color[i] = 1;
+
+    const PpCertNode& node = g.nodes[i];
+    PpConsumption acc;
+    if (node.player_cost > 0) acc[node.player_slot] += node.player_cost;
+
+    PpConsumption child_max;
+    for (const PpCertEdge& e : node.children) {
+        PpConsumption branch;
+        if (e.opp_cost > 0) branch[e.opp_slot] += e.opp_cost;
+        if (e.child >= 0) add_into(branch, visit_node(g, e.child, color, memo));
+        max_into(child_max, branch);
+    }
+    add_into(acc, child_max);
+
+    color[i] = 2;
+    memo[i] = std::move(acc);
+    return memo[i];
+}
+
+}  // namespace
+
+PpConsumption pp_max_consumption(const PpCertGraph& graph) {
+    if (graph.nodes.empty()) return {};
+    std::vector<int> color(graph.nodes.size(), 0);
+    std::vector<PpConsumption> memo(graph.nodes.size());
+    return visit_node(graph, graph.root, color, memo);
+}
+
+bool pp_cert_audit_ok(const PpConsumption& consumption, const PpRootPp& root_pp) {
+    for (const auto& [slot, consumed] : consumption) {
+        auto it = root_pp.find(slot);
+        if (it == root_pp.end())
+            throw std::logic_error(
+                "pp_cert_audit_ok: consumed slot absent from root PP snapshot");
+        const PpRootSlot& rs = it->second;
+        if (is_cycle_capable_move(rs.move_id)) continue;   // exact-tracked, exempt
+        if (rs.real_pp > 0 && consumed >= rs.real_pp) return false;
+    }
+    return true;
 }

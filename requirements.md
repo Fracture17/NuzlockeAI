@@ -2440,3 +2440,10 @@ file = "engine/src/solver/bucket/pp_canon.h"
 confidence = "settled"
 rationale = "is_cycle_capable_move = exactly the engine's apply_recovery_move set (15 self-heals incl Rest/Wish/Swallow/Strength Sap). Heal Pulse + status cures + drains excluded. Misclassification is never unsound - only precision (repeat-FAIL/audit backstop)."
 updated = "2026-07-17T20:43:49.757Z"
+
+[[record]]
+name = "pp_audit_worker_thread"
+file = "engine/src/solver/bucket/win_solver.cpp"
+confidence = "settled"
+rationale = "Certificate PP audit runs on the DFS worker's 256MB pthread (not caller thread) so the recursive walk can't overflow; guard logic_error propagates via existing exception_ptr. pp_audit_rejects = 1 per certify. Policy retained on reject for diagnosis."
+updated = "2026-07-17T21:06:49.061Z"

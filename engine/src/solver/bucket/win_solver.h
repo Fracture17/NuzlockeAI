@@ -37,8 +37,9 @@
 // on-stack repeats); the pipeline treats FAIL and INDETERMINATE alike as UNKNOWN.
 enum class BucketWinVerdict { WIN, FAIL, INDETERMINATE };
 
-// Why an INDETERMINATE verdict was returned. Records the FIRST cap hit.
-enum class BucketWinIndetReason { None, DepthCap, VisitCap };
+// Why an INDETERMINATE verdict was returned. Records the FIRST cap hit; PpAuditFail marks a
+// WIN downgraded because its certificate over-used a masked slot beyond real PP (Task 3).
+enum class BucketWinIndetReason { None, DepthCap, VisitCap, PpAuditFail };
 
 // Bucket identity for on-stack repeat detection + policy map (amendment 16(a): d plus
 // both HP intervals; support_fp is derived from d and excluded).
@@ -96,6 +97,9 @@ struct BucketWinStats {
     // PP-canonicalization telemetry (PP-canon Task 2).
     uint64_t canonical_repeats       = 0;  // on-stack-repeat FAILs (counted regardless of flag)
     int32_t  pp_horizon_used         = 0;  // effective PP horizon cap (0 when enable_pp_canon off)
+    // Certificate PP-use audit telemetry (PP-canon Task 3; nonzero only under enable_pp_canon).
+    uint64_t audit_expands           = 0;  // re-expansions during the audit walk (edge-cache miss)
+    uint64_t pp_audit_rejects        = 0;  // 1 iff a WIN was downgraded to INDETERMINATE(PpAuditFail)
 };
 
 struct BucketWinResult {
