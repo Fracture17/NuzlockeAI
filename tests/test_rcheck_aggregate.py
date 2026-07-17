@@ -18,6 +18,8 @@ _spec.loader.exec_module(agg)
 
 _CACHE_TEL = {"edge_hits": 0, "edge_misses": 3, "memo_hits": 0, "memo_stores": 1,
               "memo_suppressed": 0, "memo_containment_missed": 0}
+_PP_TEL = {"canonical_repeats": 0, "pp_horizon_used": 0, "audit_expands": 0,
+           "pp_audit_rejects": 0}
 
 
 def _record(klass, seed, index, classification, timing=(10, 20, 30),
@@ -27,7 +29,7 @@ def _record(klass, seed, index, classification, timing=(10, 20, 30),
     if thrown is not None:
         pipeline = {"verdict": None, "b_ran": False, "thrown": thrown}
     tel = {"buckets_visited": 5, "expand_calls": 3, "replays": 2,
-           "oracle_leaves": 10, "max_depth": 4, **_CACHE_TEL}
+           "oracle_leaves": 10, "max_depth": 4, **_CACHE_TEL, **_PP_TEL}
     if telemetry is not None:
         tel = telemetry
     return {
@@ -144,7 +146,11 @@ def _cache_tel(edge_hits, edge_misses, **extra):
             "max_depth": 4, "edge_hits": edge_hits, "edge_misses": edge_misses,
             "memo_hits": extra.get("memo_hits", 0), "memo_stores": extra.get("memo_stores", 0),
             "memo_suppressed": extra.get("memo_suppressed", 0),
-            "memo_containment_missed": extra.get("memo_containment_missed", 0)}
+            "memo_containment_missed": extra.get("memo_containment_missed", 0),
+            "canonical_repeats": extra.get("canonical_repeats", 0),
+            "pp_horizon_used": extra.get("pp_horizon_used", 0),
+            "audit_expands": extra.get("audit_expands", 0),
+            "pp_audit_rejects": extra.get("pp_audit_rejects", 0)}
 
 
 def test_cache_effectiveness_hit_rate(tmp_path):
@@ -190,3 +196,30 @@ def test_thrown_row_missing_cache_field_ok(tmp_path):
                              thrown={"key": "expand:ShiftViolation", "what": "boom"})])
     rep = agg.aggregate([str(s0)])
     assert rep["cache"]["edge_hits"] == 0
+
+
+def test_pp_canon_totals_aggregated(tmp_path):
+    s0 = tmp_path / "s0.jsonl"
+    _write(str(s0), [
+        _record("uniform", 1, 0, "CONSERVATIVE_UNTAGGED", b_reason="PpAuditFail",
+                telemetry=_cache_tel(0, 1, canonical_repeats=3, pp_horizon_used=7,
+                                     audit_expands=2, pp_audit_rejects=1)),
+        _record("uniform", 1, 1, "SOUND_AGREE_WIN",
+                telemetry=_cache_tel(0, 1, canonical_repeats=5, audit_expands=1)),
+    ])
+    rep = agg.aggregate([str(s0)])
+    pp = rep["pp_canon"]
+    assert pp["b_ran_records"] == 2
+    assert pp["canonical_repeats"] == 8
+    assert pp["pp_audit_rejects"] == 1
+    assert pp["audit_expands"] == 3
+    assert pp["per_field"]["pp_horizon_used"]["sum"] == 7
+
+
+def test_b_ran_missing_pp_field_is_loud(tmp_path):
+    bad = tmp_path / "bad.jsonl"
+    tel = _cache_tel(1, 1)
+    del tel["pp_audit_rejects"]  # B ran but a PP-canon field is missing
+    _write(str(bad), [_record("uniform", 1, 0, "SOUND_AGREE_WIN", telemetry=tel)])
+    with pytest.raises(agg.IntegrityError):
+        agg.aggregate([str(bad)])

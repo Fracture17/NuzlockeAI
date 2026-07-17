@@ -83,9 +83,10 @@ const char* bwverdict_str(BucketWinVerdict v) {
 
 const char* bwindet_str(BucketWinIndetReason r) {
     switch (r) {
-    case BucketWinIndetReason::None:     return "None";
-    case BucketWinIndetReason::DepthCap: return "DepthCap";
-    case BucketWinIndetReason::VisitCap: return "VisitCap";
+    case BucketWinIndetReason::None:        return "None";
+    case BucketWinIndetReason::DepthCap:    return "DepthCap";
+    case BucketWinIndetReason::VisitCap:    return "VisitCap";
+    case BucketWinIndetReason::PpAuditFail: return "PpAuditFail";
     }
     return "?";
 }
@@ -160,6 +161,10 @@ json telemetry_json(const BucketWinStats& s) {
         {"memo_stores",             s.memo_stores},
         {"memo_suppressed",         s.memo_suppressed},
         {"memo_containment_missed", s.memo_containment_missed},
+        {"canonical_repeats",       s.canonical_repeats},
+        {"pp_horizon_used",         s.pp_horizon_used},
+        {"audit_expands",           s.audit_expands},
+        {"pp_audit_rejects",        s.pp_audit_rejects},
     };
 }
 
@@ -238,6 +243,7 @@ RcheckReport rcheck_run(const RcheckConfig& cfg, std::ostream& out) {
     // cross-matchup hits; the pass-in seam exists for future same-matchup question families.
     pcfg.win_cfg.enable_edge_cache      = cfg.enable_cache;
     pcfg.win_cfg.enable_verdict_memo    = cfg.enable_cache;
+    pcfg.win_cfg.enable_pp_canon        = cfg.enable_pp_canon;
 
     BsolverConfig exact_cfg;
     exact_cfg.mode              = BMode::Exact;

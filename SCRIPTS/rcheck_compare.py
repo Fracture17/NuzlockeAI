@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Per-matchup A/B diff of two rcheck output directories (Task 11-4 cache determinism).
+"""Per-matchup A/B diff of two rcheck output directories.
 
 Joins records on (klass, seed, shard.k, index) and reports:
-  - B-verdict transition matrix (baseline -> candidate); any decided-verdict flip
-    (WIN<->FAIL) is a soundness alarm and exits 1. INDET -> decided is the only
-    permitted improvement direction; decided -> INDET is reported (budget noise).
+  - B-verdict transition matrix (baseline -> candidate).
   - b timing percentiles for both sides plus per-matchup speedup stats.
-  - Cache counter totals on the candidate side.
+  - Cache + PP-canon counter totals on the candidate side.
 Fails loud on join mismatches (a matchup present on one side only).
 
-Usage: rcheck_compare.py BASELINE_GLOB CANDIDATE_GLOB
+Two soundness contracts select the alarm rule:
+  default (cache determinism A/B): any decided-verdict flip (WIN<->FAIL) alarms + exits 1.
+  --canon  (exact baseline vs pp-canon candidate): only baseline FAIL -> candidate WIN
+           hard-fails. A pp-canon WIN is audit-passed and claims a real win; a baseline
+           FAIL means every action failed definitively in the REAL game, so FAIL -> WIN is
+           a contradiction => bug. Baseline WIN -> candidate FAIL/INDET (any reason, incl.
+           PpAuditFail) is expected canon conservatism; baseline INDET -> any candidate is
+           deeper reach; THROWN either side is a frontier shift. All are allowed.
+
+Usage: rcheck_compare.py [--canon] BASELINE_GLOB CANDIDATE_GLOB
 """
 import glob
 import json
@@ -44,6 +51,13 @@ def bv(rec):
     return p["b_verdict"]
 
 
+def b_reason(rec):
+    p = rec["pipeline"]
+    if p["thrown"] or not p["b_ran"]:
+        return "None"
+    return p.get("b_reason", "None")
+
+
 def pct(vals, q):
     if not vals:
         return 0
@@ -52,10 +66,15 @@ def pct(vals, q):
 
 
 def main():
-    if len(sys.argv) != 3:
+    args = sys.argv[1:]
+    canon = False
+    if args and args[0] == "--canon":
+        canon = True
+        args = args[1:]
+    if len(args) != 2:
         raise SystemExit(__doc__)
-    base = load(sys.argv[1])
-    cand = load(sys.argv[2])
+    base = load(args[0])
+    cand = load(args[1])
     if base.keys() != cand.keys():
         only_b = sorted(base.keys() - cand.keys())[:5]
         only_c = sorted(cand.keys() - base.keys())[:5]
@@ -66,12 +85,29 @@ def main():
     decided_to_indet = []
     bt_base, bt_cand = [], []
     counters = {k: 0 for k in ("edge_hits", "edge_misses", "memo_hits", "memo_stores",
-                               "memo_suppressed", "memo_containment_missed")}
+                               "memo_suppressed", "memo_containment_missed",
+                               "canonical_repeats", "pp_audit_rejects", "audit_expands")}
+    # canon conservatism sub-types (baseline WIN -> weaker candidate verdict).
+    conservatism = {"WIN->FAIL": 0, "WIN->INDET(PpAuditFail)": 0, "WIN->INDET(other)": 0}
     for key in base:
         vb, vc = bv(base[key]), bv(cand[key])
         trans[(vb, vc)] = trans.get((vb, vc), 0) + 1
-        if {vb, vc} == {"WIN", "FAIL"}:
-            alarms.append((key, vb, vc))
+
+        if canon:
+            # Sole soundness violation: a real FAIL turning into an audit-passed canon WIN.
+            if vb == "FAIL" and vc == "WIN":
+                alarms.append((key, vb, vc))
+            if vb == "WIN" and vc == "FAIL":
+                conservatism["WIN->FAIL"] += 1
+            elif vb == "WIN" and vc == "INDET":
+                if b_reason(cand[key]) == "PpAuditFail":
+                    conservatism["WIN->INDET(PpAuditFail)"] += 1
+                else:
+                    conservatism["WIN->INDET(other)"] += 1
+        else:
+            if {vb, vc} == {"WIN", "FAIL"}:
+                alarms.append((key, vb, vc))
+
         if vb in ("WIN", "FAIL") and vc == "INDET":
             decided_to_indet.append((key, vb))
         if base[key]["pipeline"]["b_ran"] and cand[key]["pipeline"]["b_ran"]:
@@ -81,13 +117,25 @@ def main():
         for k in counters:
             counters[k] += tel.get(k, 0)
 
-    print(f"matchups joined: {len(base)}")
+    print(f"matchups joined: {len(base)}  mode={'canon' if canon else 'strict'}")
     print("\nB-verdict transitions (baseline -> candidate):")
     for (vb, vc), n in sorted(trans.items(), key=lambda x: -x[1]):
-        marker = "  <-- ALARM" if {vb, vc} == {"WIN", "FAIL"} else ""
+        if canon:
+            marker = "  <-- HARD-FAIL" if (vb, vc) == ("FAIL", "WIN") else ""
+        else:
+            marker = "  <-- ALARM" if {vb, vc} == {"WIN", "FAIL"} else ""
         print(f"  {vb:>8} -> {vc:<8} : {n}{marker}")
     if decided_to_indet:
         print(f"\ndecided -> INDET (budget noise, not soundness): {len(decided_to_indet)}")
+
+    if canon:
+        print("\ncanon conservatism (baseline WIN -> weaker candidate):")
+        for sub, n in conservatism.items():
+            print(f"  {sub:<24}: {n}")
+        print(f"\ncandidate PP-canon totals: "
+              f"canonical_repeats={counters['canonical_repeats']}  "
+              f"pp_audit_rejects={counters['pp_audit_rejects']}  "
+              f"audit_expands={counters['audit_expands']}")
 
     if bt_base:
         print(f"\nb timing us over {len(bt_base)} B-ran pairs:")
@@ -107,9 +155,10 @@ def main():
         print(f"  edge hit rate           : {eh / (eh + em):.2%}")
 
     if alarms:
-        print(f"\nFAIL: {len(alarms)} decided-verdict flips: {alarms[:10]}")
+        label = "FAIL->WIN soundness violations" if canon else "decided-verdict flips"
+        print(f"\nFAIL: {len(alarms)} {label}: {alarms[:10]}")
         return 1
-    print("\nPASS: no decided-verdict flips")
+    print("\nPASS: no soundness violations")
     return 0
 
 

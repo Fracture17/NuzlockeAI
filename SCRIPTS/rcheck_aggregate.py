@@ -32,6 +32,11 @@ HARD_FAIL_CLASSES = {"HARD_FAIL_B_WIN", "HARD_FAIL_PESSIMAL_LOSS"}
 CACHE_FIELDS = ("edge_hits", "edge_misses", "memo_hits", "memo_stores",
                 "memo_suppressed", "memo_containment_missed")
 
+# PP-canonicalization counters (win_solver PP-canon Tasks 2-3). Required on every B-ran
+# record; emitted regardless of the --pp-canon flag (zero when the flag is off).
+PP_CANON_FIELDS = ("canonical_repeats", "pp_horizon_used", "audit_expands",
+                   "pp_audit_rejects")
+
 
 class IntegrityError(Exception):
     """Raised on any structural inconsistency in a shard file (fail-loud)."""
@@ -129,6 +134,7 @@ def aggregate(paths, expect_shards=None, expect_n=None):
     telemetry = {k: [] for k in
                  ("buckets_visited", "expand_calls", "replays", "oracle_leaves", "max_depth")}
     cache_series = {k: [] for k in CACHE_FIELDS}  # per-field values over B-ran records
+    pp_series = {k: [] for k in PP_CANON_FIELDS}  # PP-canon values over B-ran records
 
     total_records = 0
     hard_fails = 0
@@ -176,6 +182,12 @@ def aggregate(paths, expect_shards=None, expect_n=None):
                             f"{path}: B-ran record index {rec.get('index')} missing "
                             f"telemetry field '{key}' (stale shard?)")
                     cache_series[key].append(tel[key])
+                for key in PP_CANON_FIELDS:
+                    if key not in tel:
+                        raise IntegrityError(
+                            f"{path}: B-ran record index {rec.get('index')} missing "
+                            f"telemetry field '{key}' (stale shard?)")
+                    pp_series[key].append(tel[key])
 
     if expect_n is not None and total_records != expect_n:
         raise IntegrityError(
@@ -194,6 +206,14 @@ def aggregate(paths, expect_shards=None, expect_n=None):
         "memo_suppressed": sum(cache_series["memo_suppressed"]),
         "memo_containment_missed": sum(cache_series["memo_containment_missed"]),
         "per_field": {k: {"sum": sum(v), **_pctiles(v)} for k, v in cache_series.items()},
+    }
+
+    pp_canon = {
+        "b_ran_records": len(pp_series["canonical_repeats"]),
+        "canonical_repeats": sum(pp_series["canonical_repeats"]),
+        "pp_audit_rejects": sum(pp_series["pp_audit_rejects"]),
+        "audit_expands": sum(pp_series["audit_expands"]),
+        "per_field": {k: {"sum": sum(v), **_pctiles(v)} for k, v in pp_series.items()},
     }
 
     referee_indet = bins["REFEREE_INDET"]
@@ -216,6 +236,7 @@ def aggregate(paths, expect_shards=None, expect_n=None):
         "telemetry": {
             k: {"sum": sum(v), **_pctiles(v)} for k, v in telemetry.items()},
         "cache": cache,
+        "pp_canon": pp_canon,
     }
     return report
 
@@ -282,6 +303,15 @@ def print_report(report):
         print(f"  {key:<24}: sum={agg['sum']}  p50={agg['p50']:.0f}  "
               f"p90={agg['p90']:.0f}  p99={agg['p99']:.0f}")
 
+    pp = report["pp_canon"]
+    print(f"\nPP-canon (over {pp['b_ran_records']} B-ran records):")
+    print(f"  pp_audit_rejects={pp['pp_audit_rejects']}  "
+          f"canonical_repeats={pp['canonical_repeats']}  audit_expands={pp['audit_expands']}")
+    for key in PP_CANON_FIELDS:
+        agg = pp["per_field"][key]
+        print(f"  {key:<24}: sum={agg['sum']}  p50={agg['p50']:.0f}  "
+              f"p90={agg['p90']:.0f}  p99={agg['p99']:.0f}")
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Merge/validate rcheck shard JSONL outputs.")
@@ -340,7 +370,9 @@ def _make_record(klass, seed, index, classification, thrown=None, concessions=No
                                    "oracle_leaves": 10, "max_depth": 4,
                                    "edge_hits": 1, "edge_misses": 3, "memo_hits": 0,
                                    "memo_stores": 2, "memo_suppressed": 0,
-                                   "memo_containment_missed": 0},
+                                   "memo_containment_missed": 0,
+                                   "canonical_repeats": 0, "pp_horizon_used": 0,
+                                   "audit_expands": 0, "pp_audit_rejects": 0},
     }
 
 

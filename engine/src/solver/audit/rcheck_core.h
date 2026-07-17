@@ -94,6 +94,10 @@ struct RcheckConfig {
     // and verdict memo (CLI --no-cache); leaves cache ownership untouched (always local).
     bool     enable_cache = true;
 
+    // PP-canonicalization switch (CLI --pp-canon). Activates masked-slot PP canonicalization,
+    // pp_horizon depth cap, and the post-WIN certificate PP audit on the B-solver. Default OFF.
+    bool     enable_pp_canon = false;
+
     // Injected matchups + seams (tests / pipeline coverage). Non-empty injected → the
     // generator is NOT used. injected non-empty AND repo_root non-empty → throws.
     std::vector<BattleState> injected;

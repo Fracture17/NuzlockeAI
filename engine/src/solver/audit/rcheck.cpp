@@ -5,7 +5,7 @@
 // Usage:
 //   rcheck --seed S --klass {uniform|berry|sash} --n N --shard k/of --out PATH
 //          [--exact-leaves N --exact-nodes N --pess-leaves N --pess-nodes N
-//           --b-depth N --b-visits N --no-cache]
+//           --b-depth N --b-visits N --no-cache --pp-canon]
 #include "solver/audit/rcheck_core.h"
 
 #include <cstdint>
@@ -45,7 +45,7 @@ static const char* const VALUE_FLAGS[] = {
     "--b-depth", "--b-visits",
 };
 // Every boolean flag (no following token).
-static const char* const BOOL_FLAGS[] = {"--no-cache", "--help", "-h"};
+static const char* const BOOL_FLAGS[] = {"--no-cache", "--pp-canon", "--help", "-h"};
 
 static bool in_list(const char* s, const char* const* list, int n) {
     for (int i = 0; i < n; ++i)
@@ -68,6 +68,7 @@ static void print_usage(std::FILE* f) {
         "  --b-depth N           B-solver depth cap (default 500)\n"
         "  --b-visits N          B-solver visit cap (default 1000000)\n"
         "  --no-cache            disable B-solver edge cache + verdict memo\n"
+        "  --pp-canon            enable PP canonicalization + certificate PP audit\n"
         "  --help, -h            print this help and exit 0\n");
 }
 
@@ -118,7 +119,8 @@ int main(int argc, char** argv) {
     cfg.pess_nodes   = (uint64_t)parse_long(get_arg(argc, argv, "--pess-nodes",   "1000"), 1000);
     cfg.b_depth      = (int)parse_long(get_arg(argc, argv, "--b-depth", "500"), 500);
     cfg.b_visits     = (uint64_t)parse_long(get_arg(argc, argv, "--b-visits", "1000000"), 1000000);
-    cfg.enable_cache = !has_flag(argc, argv, "--no-cache");
+    cfg.enable_cache    = !has_flag(argc, argv, "--no-cache");
+    cfg.enable_pp_canon = has_flag(argc, argv, "--pp-canon");
 
     const char* out_path = get_arg(argc, argv, "--out", nullptr);
 

@@ -40,6 +40,8 @@ def build_commands(args):
             budget_flags += [flag, str(val)]
     if args.no_cache:
         budget_flags += ["--no-cache"]
+    if args.pp_canon:
+        budget_flags += ["--pp-canon"]
 
     for klass in args.classes:
         for seed in args.seeds:
@@ -75,6 +77,8 @@ def main(argv=None):
     ap.add_argument("--b-visits", type=int, default=None)
     ap.add_argument("--no-cache", action="store_true",
                     help="disable B-solver edge cache + verdict memo (A/B determinism)")
+    ap.add_argument("--pp-canon", action="store_true",
+                    help="enable PP canonicalization + certificate PP audit")
     args = ap.parse_args(argv)
 
     cells = list(build_commands(args))

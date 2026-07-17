@@ -185,6 +185,12 @@ TEST_CASE("rcheck injected-pairs run: counts, hard_fails, JSONL shape, summary",
             REQUIRE(tel.contains(f));
             REQUIRE(tel[f].is_number_integer());
         }
+        // PP-canon telemetry (PP-canon Task 4): four new counters present as integers.
+        for (const char* f : {"canonical_repeats", "pp_horizon_used",
+                              "audit_expands", "pp_audit_rejects"}) {
+            REQUIRE(tel.contains(f));
+            REQUIRE(tel[f].is_number_integer());
+        }
     }
     // Last line is the summary; bins recomputed from records must match embedded summary.
     json summary = lines[4]["summary"];
@@ -201,6 +207,46 @@ TEST_CASE("rcheck injected-pairs run: counts, hard_fails, JSONL shape, summary",
         int embedded = summary["bins"][rcheck_class_name((RcheckClass)c)];
         REQUIRE(embedded == recomputed[c]);
     }
+}
+
+TEST_CASE("rcheck injected: PpAuditFail b_reason stringifies + pp_audit_rejects carried",
+          "[bucket][rcheck]") {
+    // A pp-canon WIN downgraded to INDETERMINATE(PpAuditFail): the pipeline reports UNKNOWN
+    // with b_reason=PpAuditFail and pp_audit_rejects=1. The JSONL record must stringify the
+    // reason correctly and surface the four PP-canon counters as integers.
+    RcheckConfig cfg;
+    cfg.injected = {alive_state(2)};
+    cfg.enable_pp_canon = true;
+    cfg.pipeline_fn = [](const BattleState&, const Question&) -> PipelineResult {
+        PipelineResult r;
+        r.verdict   = PipelineVerdict::UNKNOWN;
+        r.b_ran     = true;
+        r.b_verdict = BucketWinVerdict::INDETERMINATE;
+        r.b_reason  = BucketWinIndetReason::PpAuditFail;
+        r.b_stats.canonical_repeats = 4;
+        r.b_stats.pp_horizon_used   = 7;
+        r.b_stats.audit_expands     = 2;
+        r.b_stats.pp_audit_rejects  = 1;
+        return r;
+    };
+    cfg.exact_fn = [](const BattleState&, const Question&) -> BsolverResult {
+        BsolverResult r; r.verdict = BVerdict::WIN; return r;
+    };
+    std::ostringstream out;
+    RcheckReport rep = rcheck_run(cfg, out);
+    REQUIRE(rep.n == 1);
+    REQUIRE(rep.hard_fails == 0);
+
+    std::string line;
+    std::istringstream in(out.str());
+    std::getline(in, line);
+    json rec = json::parse(line);
+    REQUIRE(rec["pipeline"]["b_reason"] == "PpAuditFail");
+    json tel = rec["telemetry"];
+    REQUIRE(tel["canonical_repeats"].get<uint64_t>() == 4);
+    REQUIRE(tel["pp_horizon_used"].get<int32_t>() == 7);
+    REQUIRE(tel["audit_expands"].get<uint64_t>() == 2);
+    REQUIRE(tel["pp_audit_rejects"].get<uint64_t>() == 1);
 }
 
 TEST_CASE("rcheck injected: thrown pipeline → THROWN + census", "[bucket][rcheck]") {
