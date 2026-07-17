@@ -108,6 +108,7 @@ add_library(nuzlocke_solver STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/ai_breakpoints.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/bucket.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/expand.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/pp_canon.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/transition_cache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/win_solver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/solver/bucket/pipeline.cpp

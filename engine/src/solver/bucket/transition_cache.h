@@ -61,9 +61,19 @@ struct TransitionCacheStats {
 
 class TransitionCache {
 public:
+    // PP-canon mode tag (Task 2). Exact and Canonical entries are keyed by interner
+    // context ids from incompatible interning regimes and MUST never share a cache.
+    enum class Mode { Unset, Exact, Canonical };
+
     TransitionOracle oracle;
     ContextInterner  interner;
     TransitionCacheStats stats;
+
+    // Bind this cache to one canonicalization regime. First call sets it; a later call
+    // under the OTHER mode THROWS std::logic_error (mirrors edge_cache_owns_interner:
+    // canonical and exact contexts can never coexist in one interner/cache).
+    void require_mode(Mode m);
+    Mode mode() const { return mode_; }
 
     // Return the cached ExpandResult for key, or null on miss. Counts hit/miss.
     const ExpandResult* lookup(const EdgeKey& key);
@@ -75,6 +85,7 @@ public:
 
 private:
     std::unordered_map<EdgeKey, ExpandResult, EdgeKeyHash> edges_;
+    Mode mode_ = Mode::Unset;
 };
 
 #endif // NUZLOCKE_SOLVER_BUCKET_TRANSITION_CACHE_H

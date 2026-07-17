@@ -17,6 +17,7 @@
 #include "solver/bucket/expand.h"
 
 #include "ai_analytic.h"                 // cpp_compute_action_probabilities
+#include "solver/bucket/pp_canon.h"      // canonicalize_pp (Task 2 child interning)
 #include "core_leaf.h"                   // damage_table lives via engine_queries.h
 #include "effects_internal.h"            // is_berry (Cheek Pouch gate)
 #include "residuals.h"                   // residual constants referenced in comments
@@ -1065,7 +1066,18 @@ ExpandResult expand(const Bucket& A, const ExecAction& player_move, ExpandContex
                 shift_gate_or_throw(opp.first, opp.second, op_lo_out, op_hi_out,
                                     op_max, "opp");
 
-                uint32_t d_prime = intern_and_match(interner, leaf.lo_child, leaf.hi_child);
+                // PP-canonicalize the child corners (masked-slot PP -> sentinel) before
+                // interning so heal-stall cycles collapse into one context d. HP reads above
+                // are PP-independent; support below is PP-{0,>0}-invariant, so canonicalizing
+                // here leaves d' and ch_fp mutually consistent.
+                BattleState lo_child = leaf.lo_child;
+                BattleState hi_child = leaf.hi_child;
+                if (ctx.canonicalize_pp) {
+                    canonicalize_pp(lo_child);
+                    canonicalize_pp(hi_child);
+                }
+
+                uint32_t d_prime = intern_and_match(interner, lo_child, hi_child);
 
                 // Compute child image rectangle from LO/HI corners (INV-2).
                 HpInterval pl_img = image_interval(pl_lo_out, pl_hi_out);
@@ -1076,7 +1088,7 @@ ExpandResult expand(const Bucket& A, const ExecAction& player_move, ExpandContex
                 // parent bucket; child support gates fire again during the child's
                 // own expand.
                 std::vector<ActionProb> ch_probs = cpp_compute_action_probabilities(
-                    leaf.lo_child, /*ai_idx=*/1);
+                    lo_child, /*ai_idx=*/1);
                 uint64_t ch_fp = support_fingerprint(ch_probs);
 
                 // Image splits at BpSet breakpoints on both axes (per-child d' preserved).

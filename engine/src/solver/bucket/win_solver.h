@@ -71,6 +71,10 @@ struct BucketWinConfig {
     TransitionCache* cache               = nullptr;
     bool             enable_edge_cache   = true;
     bool             enable_verdict_memo = true;
+    // PP-canonicalization (PP-canon Task 2). DEFAULT OFF: canonicalizes masked-slot PP on
+    // the root + every interned child so heal-stall cycles collapse; caps depth at the real
+    // root's pp_horizon. Every other gate is unaffected when off.
+    bool             enable_pp_canon     = false;
 };
 
 struct BucketWinStats {
@@ -89,6 +93,9 @@ struct BucketWinStats {
     uint64_t memo_stores             = 0;  // verdicts written to the memo
     uint64_t memo_suppressed         = 0;  // FAIL verdicts withheld (cycle-contaminated)
     uint64_t memo_containment_missed = 0;  // exact-miss queries a rectangle memo would cover
+    // PP-canonicalization telemetry (PP-canon Task 2).
+    uint64_t canonical_repeats       = 0;  // on-stack-repeat FAILs (counted regardless of flag)
+    int32_t  pp_horizon_used         = 0;  // effective PP horizon cap (0 when enable_pp_canon off)
 };
 
 struct BucketWinResult {

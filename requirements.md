@@ -2412,3 +2412,31 @@ file = "engine/src/solver/audit/rcheck_core.cpp"
 confidence = "provisional"
 rationale = "rcheck leaves win_cfg.cache=nullptr (per-certify local cache): one question per matchup and matchups never share d, so a shard-lifetime shared cache = unbounded memory for zero cross-matchup hits. Revisit when same-matchup question batches exist."
 updated = "2026-07-16T17:11:35.717Z"
+
+[[record]]
+name = "pp_mask_all_nonheal"
+file = "engine/src/solver/bucket/pp_canon.h"
+confidence = "requirement"
+rationale = "USER 2026-07-16: mask ALL non-healing PP from keys - drain AND Leppa included; accept accuracy loss for speed. Struggle only if a mon STARTS all-zero/choice-locked/heal-only. PP-stall gets a separate future solver (short loop + analytical extension)."
+updated = "2026-07-17T19:56:18.915Z"
+
+[[record]]
+name = "pp_cert_audit_soundness"
+file = "engine/src/solver/bucket/win_solver.cpp"
+confidence = "requirement"
+rationale = "USER 2026-07-16: certificate PP audit IS the soundness mechanism (amends 16b: cap bounds length not per-slot use; cap alone admits false WINs). Max path use per masked slot < root PP strict, Pressure=2; violation = INDET PpAuditFail. Cap = insurance."
+updated = "2026-07-17T19:57:00.251Z"
+
+[[record]]
+name = "tib_clamp_canonical"
+file = "engine/src/solver/bucket/pp_canon.cpp"
+confidence = "settled"
+rationale = "canonicalize_pp also clamps turns_in_battle to min(v,5): all 13 engine reads are threshold checks (max <5), so >=5 is behaviorally identical - fully behavior-preserving, no audit needed. Unclamped tib grows unboundedly: no repeats, PP-canon inert."
+updated = "2026-07-17T20:43:40.347Z"
+
+[[record]]
+name = "heal_list_from_recovery_fn"
+file = "engine/src/solver/bucket/pp_canon.h"
+confidence = "settled"
+rationale = "is_cycle_capable_move = exactly the engine's apply_recovery_move set (15 self-heals incl Rest/Wish/Swallow/Strength Sap). Heal Pulse + status cures + drains excluded. Misclassification is never unsound - only precision (repeat-FAIL/audit backstop)."
+updated = "2026-07-17T20:43:49.757Z"

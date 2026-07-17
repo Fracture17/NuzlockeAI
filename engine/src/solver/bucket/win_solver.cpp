@@ -9,6 +9,7 @@
 #include "solver/action_space.h"         // legal_player_actions
 #include "solver/bucket/breakpoints.h"
 #include "solver/bucket/concede.h"       // concede_tags
+#include "solver/bucket/pp_canon.h"      // canonicalize_pp, pp_horizon (Task 2)
 #include "solver/bucket/transition_cache.h"
 #include "solver/state_codec.h"
 #include "solver/transition_oracle.h"
@@ -85,6 +86,10 @@ struct WinState {
     std::unordered_map<BucketKey, bool, BucketKeyHash> memo;
     // Secondary index by d for the rectangle-containment counter (measurement only).
     std::unordered_map<int32_t, std::vector<std::pair<BucketKey, bool>>> memo_by_d;
+
+    // Effective depth cap: cfg.depth_cap, tightened to the real root's pp_horizon when
+    // enable_pp_canon is set (PP-canon Task 2). Set once in bucket_win_certify.
+    int effective_depth_cap = 0;
 
     // Sticky visit-cap flag: once tripped, every deeper call short-circuits to INDET.
     bool visit_cap_hit = false;
@@ -239,14 +244,17 @@ DfsResult dfs(WinState& S, const Bucket& A, int depth) {
         containment_scan(S, key);   // exact miss → measure rectangle coverage
     }
 
-    // Step 3: depth cap.
-    if (depth >= S.cfg.depth_cap) {
+    // Step 3: depth cap (tightened to pp_horizon under PP-canon).
+    if (depth >= S.effective_depth_cap) {
         record_reason(S, BucketWinIndetReason::DepthCap);
         return {V::INDET, kLowlinkInf};
     }
 
     // Step 4: on-stack repeated bucket → FAIL (amendment 16(a)); lowlink = ancestor depth.
+    // Counted unconditionally: previously reachable only via test overrides, now the
+    // canonical heal-stall collapse makes it a live path.
     if (auto sit = S.stack.find(key); sit != S.stack.end()) {
+        S.result.stats.canonical_repeats++;
         return {V::FAIL, sit->second};
     }
 
@@ -365,25 +373,42 @@ BucketWinResult bucket_win_certify(const BattleState& initial_state, const Quest
 
     auto S = std::make_unique<WinState>(q, cfg);
 
+    // PP-canon regime (Task 2): bind the cache to canonical/exact once (throws on a mismatched
+    // shared cache), snapshot the REAL root's PP horizon, and tighten the effective depth cap.
+    S->cache->require_mode(cfg.enable_pp_canon ? TransitionCache::Mode::Canonical
+                                               : TransitionCache::Mode::Exact);
+    S->effective_depth_cap = cfg.depth_cap;
+    if (cfg.enable_pp_canon) {
+        int32_t horizon = pp_horizon(initial_state);
+        S->result.stats.pp_horizon_used = horizon;
+        S->effective_depth_cap = std::min(cfg.depth_cap, horizon);
+    }
+
     // Instantiate the breakpoint set and wire the persistent ExpandContext to the cache's
     // oracle + interner. bp_fp scopes edge-cache keys and is computed once per certify.
     S->bp    = S->registry.instantiate(initial_state, q);
     S->bp_fp = bp_fingerprint(S->bp);
-    S->ctx.oracle   = &S->cache->oracle;
-    S->ctx.interner = &S->cache->interner;
-    S->ctx.bp       = &S->bp;
-    S->ctx.concede  = concede_tags;
-    S->ctx.options  = ExpandOptions{};
+    S->ctx.oracle          = &S->cache->oracle;
+    S->ctx.interner        = &S->cache->interner;
+    S->ctx.bp              = &S->bp;
+    S->ctx.concede         = concede_tags;
+    S->ctx.options         = ExpandOptions{};
+    S->ctx.canonicalize_pp = cfg.enable_pp_canon;
+
+    // Root pack/intern uses a PP-canonicalized copy when canonicalizing, so the root context
+    // d matches the canonical child contexts. Terminal classify above stayed on the real state.
+    BattleState root_state = initial_state;
+    if (cfg.enable_pp_canon) canonicalize_pp(root_state);
 
     // Root bucket: singleton HP intervals at the concrete initial HP. d = context id;
     // support_fp is the canonical support fingerprint (MUST pair pack + support per
     // expand.h). support_fingerprint over cpp_compute_action_probabilities(state, 1).
-    PackedKey root_key = S->cache->interner.pack(initial_state);
+    PackedKey root_key = S->cache->interner.pack(root_state);
     uint32_t  root_d   = ctx_id_of(root_key);
     int32_t   pl_hp    = pl_hp_of(root_key);
     int32_t   op_hp    = opp_hp_of(root_key);
     uint64_t  root_fp  = support_fingerprint(
-        cpp_compute_action_probabilities(initial_state, 1));
+        cpp_compute_action_probabilities(root_state, 1));
 
     Bucket root(root_d, HpInterval{pl_hp, pl_hp}, HpInterval{op_hp, op_hp}, root_fp, S->bp);
 

@@ -88,6 +88,9 @@ struct ExpandContext {
     const BpSet*            bp;
     ConcedeFn               concede;    // may be null
     ExpandOptions           options;
+    // When true, each oracle child state is PP-canonicalized (see pp_canon.h) immediately
+    // before it is interned, so masked-slot PP differences collapse into one context d.
+    bool                    canonicalize_pp = false;
 };
 
 // Expand a bucket under one player action. See file-header comment for pipeline.

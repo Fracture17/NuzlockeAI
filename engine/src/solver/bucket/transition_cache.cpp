@@ -47,6 +47,16 @@ std::size_t EdgeKeyHash::operator()(const EdgeKey& k) const {
     return h;
 }
 
+void TransitionCache::require_mode(Mode m) {
+    if (mode_ == Mode::Unset) {
+        mode_ = m;
+        return;
+    }
+    if (mode_ != m)
+        throw std::logic_error(
+            "TransitionCache::require_mode: canonical/exact regime mismatch on a shared cache");
+}
+
 const ExpandResult* TransitionCache::lookup(const EdgeKey& key) {
     auto it = edges_.find(key);
     if (it == edges_.end()) {
