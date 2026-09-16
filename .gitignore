@@ -17,3 +17,7 @@ __pycache__/
 
 # Runtime logs
 logs/
+
+# mGBA savestates — ROM memory dumps, never committed.
+# Recreate your own with SCRIPTS/play.py (M key) against your own copy of the game.
+States/
