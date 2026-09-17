@@ -9,9 +9,13 @@ recording every sweep boundary so each failure is an offline-replayable repro.
 Each run it picks a random state subfolder from `--states-dir`, kills any live
 mGBA, launches a fresh instance, loads the save state, auto-initialises the
 battle (equivalent to pressing `O` in `play.py`), then plays it to the end. The
-driving policy is chosen per battle by a coin flip: **80% pure `RandomPolicy`**
-(near-instant, maximises throughput) and **20% `GreedyPolicy`**. After every
-turn the full candidate sweep runs exactly as in live play.
+driving policy is **100% `RandomPolicy`** (near-instant, maximises throughput).
+After every turn the full candidate sweep runs exactly as in live play.
+
+> Historical note: this used to be an 80/20 split with `GreedyPolicy`. The greedy
+> searcher was dropped in the migration to this repo, so `_make_policy` now returns
+> `RandomPolicy` unconditionally. Coverage is therefore random-policy-shaped — see
+> the coverage caveat in README.md.
 
 The loop continues only while the outcome is `OK` or `FAILURE`. Any other
 outcome (notably `CRASHED`) **stops the loop** — that is the signal a bug was
@@ -80,7 +84,7 @@ The recording session path is printed at battle init as `[recorder] Session: …
    the crash turn.
 
    ```python
-   import src.sweep_recorder as sr
+   import liveplay.sweep_recorder as sr
    recs = sr.load_session("/tmp/vision/recordings/<ts>")
    for r in recs:
        if r.error: print(r.index, r.error["type"], r.error["message"][:120])

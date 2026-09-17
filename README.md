@@ -3,9 +3,10 @@
 A battle engine and formal solver for **Pokémon Run & Bun**, a difficulty romhack of Pokémon
 Emerald, built to be driven in real time by reading the emulator's screen.
 
-> **Status:** research codebase. The engine, the screen-reading inference layer, and two of three
-> solvers are built and tested. The live loop runs today on an injectable policy — wiring certified
-> solver output into it is still ahead. See [Current status](#current-status).
+> **Status: on hiatus.** Last worked on July 2026. The engine, the screen-reading inference layer,
+> and two of three solvers are built and tested; the third was specified but never implemented. The
+> live loop runs on an injectable policy — wiring certified solver output into it is still ahead.
+> I expect to come back to it. See [Where I stopped](#where-i-stopped).
 
 The interesting constraint here is not "play Pokémon well." It is that **being probably-right is
 worthless**. A Nuzlocke run permanently loses any Pokémon that faints, so a line that wins 95% of
@@ -69,6 +70,29 @@ buckets, so it is carried as an interval with explicit error bounds.
 **Message matching.** Raw text passes through a stability filter (≥2 identical consecutive frames)
 to reject mid-render frames, then fuzzy dynamic-programming matching against the game's string
 table recovers which message fired.
+
+### Why read the screen instead of memory?
+
+The predecessor project read battle state straight out of GBA RAM — faster, exact, and far less
+work. Reading pixels instead was deliberate:
+
+- **The agent should play the way a person does.** Working from the same 240×160 screen a human
+  sees is a constraint worth keeping rather than an obstacle to route around.
+- **It's the constraint serious benchmarks use.** Game-playing competitions frequently require
+  vision-only input, or score it above direct state access.
+- **Correctness doesn't depend on it.** The candidate sweep is the oracle either way — if the
+  inferred state contradicts the engine, the surviving candidate set goes empty and the run fails
+  loudly. Vision changes how an observation arrives, not whether it can be checked.
+
+There was a practical cost pushing the same way: Run & Bun has no decompilation, so memory
+addresses have to be re-derived by hand. That is slow work for a coding agent, which gets no useful
+feedback signal from an address hunt, so it needed far more of my direct involvement than the rest
+of the project did.
+
+**In hindsight I'd have done it anyway.** Reading memory would have given exact recorded battle
+state, and therefore automated replay-based parity tests running in milliseconds — the same
+technique that made the Python→C++ port verifiable. I didn't think of that at the time. It is the
+single change that would most have accelerated this project.
 
 **The candidate sweep.** The inference core. At each decision boundary it enumerates the cross
 product of (player action × opponent action × crit × damage rolls × secondary effects), simulates
@@ -195,6 +219,49 @@ deliberate divergences.
    source, and the Run & Bun damage calculator. This is *not* bit-verified, and the known gaps are
    tracked explicitly in `RECORDS/INTENTIONAL_DIVERGENCES.md` and `RECORDS/*Issues.md`.
 
+### Differential testing against the real game
+
+The strongest evidence for game fidelity isn't a fixture suite — it's that the engine is
+continuously given the chance to be contradicted by the game itself.
+
+`SCRIPTS/stress_test.py` plays battles against the live emulator, running the full candidate sweep
+after every turn. The sweep enumerates every RNG outcome the engine believes possible and discards
+the ones contradicting the observed HP deltas and messages. **An empty surviving set means the
+engine and the real game disagree**, and that halts the loop as a bug signal, with the boundary
+recorded for offline replay.
+
+What makes this sensitive rather than a formality:
+
+- **Damage is a narrow window.** The roll is `pre_roll * (85 + roll_int) / 100` over 16 equiprobable
+  outcomes, so a prediction spans ~15%. A 5% systematic error puts roughly a third of observations
+  outside the predicted set; even a one-HP floor error contradicts on about one roll in sixteen.
+- **Crits are doubly observable** — a disjoint damage range *and* their own message.
+- **Player HP is read exactly**; opponent HP is bucketed into 48 pixels, which delays detection
+  rather than preventing it.
+
+### Support-set soundness
+
+The solver needs the *set* of moves the opponent AI may choose, not the distribution over it —
+proving a 100% outcome means beating every option, so relative score magnitudes within a tie are
+irrelevant. That makes the two failure modes asymmetric:
+
+| Error | Consequence |
+|---|---|
+| Support too **narrow** | The AI eventually picks an unmodelled move, the sweep finds no survivors, and live play **fails loudly** |
+| Support too **wide** | Extra adversarial branches to beat, so some winnable positions can't be certified — costs completeness, never soundness |
+
+**The dangerous direction is the detectable one.** An over-narrow support is what would make a
+proof wrong, and it is precisely the case that announces itself during live play.
+
+### What this doesn't cover
+
+Support correctness has to hold at *every* state a proof touches. Stress testing visits a
+distribution shaped by random play — broad and adversarial in its own way, but not the same
+distribution a solver-driven line would reach, and the greedy policy that once supplied the other
+20% was dropped in the migration. This argument is currently **unquantified**: there is no
+instrumentation for distinct states visited or revisit counts, so the coverage claim rests on
+volume rather than a measured figure.
+
 **The design's own assumptions get audited too.** The solver's damage handling originally rested on
 a claim in the formal spec: that a critical hit's minimum damage always exceeds a normal hit's
 maximum by at least 1.275×, which would let all 32 damage outcomes for an attack collapse into a
@@ -215,7 +282,8 @@ with a monitor on it.
 
 ## Current status
 
-Active research project, not a finished product.
+Development is paused, not abandoned — I stopped in July 2026 and expect to return to it. What
+follows is where things actually stand.
 
 **Working** — full singles engine with the R&B opponent AI; vision, message matching and the
 candidate sweep running live against mGBA; solvers A and B with breakpoints, `Expand`, concede
@@ -225,7 +293,10 @@ detectors, transition caching and PP canonicalization; the regression suite abov
 - **Singles only.** Doubles is structurally gated (`active_indices=[0]`), with ~20 catalogued
   doubles defects in [TODO.md](TODO.md) — wrong-slot residual routing, shared speed-tie
   resolution, no AI target selection.
-- **Solver C is unwritten**, so the `UNKNOWN` residue is undecided. Largest open piece.
+- **Solver C is unwritten**, so the `UNKNOWN` residue is undecided. This is the largest open
+  piece, and it went unwritten because I stopped working on the project — not because of anything
+  I learned about the approach. It was always scheduled as follow-on work after the prototype
+  pipeline, and the design in `SOLVER_BUCKET_PLAN.md` still stands.
 - **Solver B's win rate is limited by its concession list.** HP-dependent moves (Super Fang,
   Endeavor, Seismic Toss, Reversal) dominate by a wide margin: their maps are monotone but not
   constant shifts, so the interval collapse is invalid and the line is conceded.
@@ -234,7 +305,10 @@ detectors, transition caching and PP canonicalization; the regression suite abov
 - Two `_apply_status_move` branches throw on unported effects; ~80 status moves are deliberately
   excluded; Pursuit switch-interception is unimplemented.
 
-**Next steps**
+## Where I stopped
+
+These are the next things I'd do, in order, whenever I pick it back up.
+
 1. Solver C, to decide the `UNKNOWN` residue.
 2. Special-case the HP-dependent moves to recover the conceded lines.
 3. **Party selection and resource allocation** — extend the solver's question beyond a single 1v1
